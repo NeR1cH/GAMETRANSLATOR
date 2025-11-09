@@ -10,7 +10,17 @@ git push origin v1.0.1
 
 # GitHub автоматически соберёт новый .exe!
 # Пересоздайте тег:
-git tag -d v1.0.0# Удалите старый тег с удалённого репозитория:
-git push origin --delete v1.0.0# Создайте тег заново:
-git tag v1.0.0# Загрузите тег на удалённый репозиторий:
-git push origin v1.0.0# Готово!
+# Удалите старый тег с удалённого репозитория:
+git tag -d v1.0.0
+# Создайте тег заново:
+git push origin --delete v1.0.0
+# Загрузите тег на удалённый репозиторий:
+git tag v1.0.0
+# Готово!
+git push origin v1.0.0
+
+# Пересоздайте тег:
+git tag -d v1.0.0
+git push origin --delete v1.0.0
+git tag v1.0.0
+git push origin v1.0.0
