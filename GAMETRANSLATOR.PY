@@ -16,8 +16,8 @@ pip install requests
 3. Скопируй API ключ из личного кабинета
 4. Вставь его в программе через настройки
 
-Автор: NeR1cH (Enhanced by Claude)
-Версия: 3.1 - Archive Browser Edition
+Автор: NeR1cH 
+Версия: 3.2 - Archive Browser Edition and UI Improvements
 """
 
 import sys
@@ -322,18 +322,24 @@ class TranslatorApp:
         self.root.title("🌐 DeepL Game Translator")
         self.root.geometry("900x700")
         self.root.resizable(True, True)
-        
+    
+        # Загружаем конфигурацию
         self.config = load_config()
         self.api_key = self.config.get("api_key", "")
-        
+
         self.center_window()
         self.setup_style()
         self.create_ui()
-        
+    
+        # Проверяем наличие API ключа
         if not self.api_key:
-            self.show_settings()
+            self.status_bar.config(text="⚠️ API ключ не настроен - откройте Настройки", 
+                                bg="#e74c3c", fg="white")
+            # Автоматически открываем настройки при первом запуске
+            self.root.after(500, self.show_settings)
         else:
-            self.status_bar.config(text="✅ API ключ настроен", fg="#27ae60")
+            self.status_bar.config(text="✅ API ключ загружен из конфигурации", 
+                                bg="#27ae60", fg="white")
     
     def center_window(self):
         """Центрирует окно"""
@@ -1891,7 +1897,7 @@ class SettingsDialog:
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("⚙️ Настройки")
-        self.dialog.geometry("600x400")
+        self.dialog.geometry("800x600")
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         self.dialog.grab_set()
@@ -2030,27 +2036,50 @@ class SettingsDialog:
             ErrorDialog(self.dialog, "Ошибка", "API ключ не может быть пустым!")
             return
         
-        # Обновляем ключ в приложении
+        # Показываем индикатор проверки
+        self.dialog.config(cursor="wait")
+        self.dialog.update()
+        
+        # Проверяем ключ через тестовый перевод
+        test_result = translate_with_deepl("Hello", api_key, retry=1)
+        
+        self.dialog.config(cursor="")
+        
+        if isinstance(test_result, tuple):
+            # Ошибка при проверке ключа
+            error_msg = test_result[1]
+            ErrorDialog(self.dialog, "Ошибка проверки API ключа", 
+                    f"Не удалось подтвердить ключ:\n{error_msg}\n\nПроверьте правильность ключа и попробуйте снова.")
+            return
+        
+        # Ключ работает - сохраняем
         self.app.api_key = api_key
         self.app.config['api_key'] = api_key
         
-        # Сохраняем конфигурацию
+        # Сохраняем конфигурацию в файл
         if save_config(self.app.config):
             # Обновляем статус-бар
-            self.app.status_bar.config(text="✅ API ключ настроен и готов к работе", bg="#27ae60", fg="white")
+            self.app.status_bar.config(
+                text="✅ API ключ проверен и готов к работе", 
+                bg="#27ae60", 
+                fg="white"
+            )
             
             # Показываем успешное сообщение
-            InfoDialog(self.dialog, "Успех", 
-                      f"Настройки сохранены!\n\n"
-                      f"API ключ: {api_key[:10]}...{api_key[-5:]}\n"
-                      f"Сохранён в: {CONFIG_FILE}")
+            InfoDialog(self.dialog, "Успех!", 
+                    f"✅ API ключ подтверждён и сохранён!\n\n"
+                    f"Ключ: {api_key[:10]}...{api_key[-5:]}\n"
+                    f"Сохранён в: {CONFIG_FILE}\n\n"
+                    f"Тестовый перевод прошёл успешно!")
             
             # Закрываем окно настроек
             self.dialog.destroy()
         else:
             ErrorDialog(self.dialog, "Ошибка", 
-                       f"Не удалось сохранить настройки в файл {CONFIG_FILE}")
-            
+                    f"API ключ проверен, но не удалось сохранить в файл {CONFIG_FILE}\n\n"
+                    f"Ключ будет работать в текущей сессии.")
+            self.app.api_key = api_key
+            self.dialog.destroy()
 class HelpDialog:
     def __init__(self, parent):
         self.dialog = tk.Toplevel(parent)
@@ -2208,8 +2237,9 @@ class HelpDialog:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Автор: NeR1cH (Enhanced by Claude)
-Версия: Версия: 3.1 - Archive Browser Edition
+Автор: NeR1cH 
+Версия: Версия: 3.2 - Archive Browser Edition and UI Improvements
+GitHub: 1.1.0.0
         """
         
         tk.Label(content, text=help_text.strip(), font=("Consolas", 9),
