@@ -332,6 +332,8 @@ class TranslatorApp:
         
         if not self.api_key:
             self.show_settings()
+        else:
+            self.status_bar.config(text="✅ API ключ настроен", fg="#27ae60")
     
     def center_window(self):
         """Центрирует окно"""
@@ -1702,11 +1704,15 @@ class SettingsDialog:
             ErrorDialog(self.dialog, "Ошибка", "API ключ не может быть пустым!")
             return
         
+        # Обновляем ключ в приложении
         self.app.api_key = api_key
         self.app.config['api_key'] = api_key
         
+        # Сохраняем конфигурацию
         if save_config(self.app.config):
-            InfoDialog(self.dialog, "Успех", "Настройки сохранены!")
+            # Обновляем статус-бар
+            self.app.status_bar.config(text="✅ API ключ настроен и готов к работе", fg="#27ae60")
+            InfoDialog(self.dialog, "Успех", "Настройки сохранены!\n\nAPI ключ готов к использованию.")
             self.dialog.destroy()
         else:
             ErrorDialog(self.dialog, "Ошибка", "Не удалось сохранить настройки")
@@ -1889,8 +1895,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-и м47
 class InfoDialog:
     def __init__(self, parent, title, message):
         self.dialog = tk.Toplevel(parent)
