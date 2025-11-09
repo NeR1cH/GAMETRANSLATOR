@@ -1890,7 +1890,7 @@ def main():
 if __name__ == "__main__":
     main()
 
-
+и м47
 class InfoDialog:
     def __init__(self, parent, title, message):
         self.dialog = tk.Toplevel(parent)
