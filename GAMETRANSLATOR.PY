@@ -17,7 +17,7 @@ pip install requests
 4. Вставь его в программе через настройки
 
 Автор: NeR1cH (Enhanced by Claude)
-Версия: 3.0 - Full GUI Edition
+Версия: 3.1 - Archive Browser Edition
 """
 
 import sys
@@ -803,12 +803,32 @@ class TranslatorApp:
             title="Выберите архив",
             filetypes=[("Архивы", "*.zip *.tar *.tar.gz *.tgz"), ("Все файлы", "*.*")]
         )
-        if path:
+        if not path:
+            return
+
+        # Спрашиваем, хочет ли пользователь выбрать конкретные файлы
+        choice = self.ask_yes_no(
+            "Выбор файлов",
+            "Хотите выбрать конкретные файлы/папки внутри архива?\n\n"
+            "ДА - Открыть содержимое архива для выбора\n"
+            "НЕТ - Обработать весь архив целиком"
+        )
+        
+        if choice is None:
+            return
+        
+        if choice:
+            # Показываем содержимое архива для выбора БЕЗ ЗАДЕРЖКИ
+            try:
+                self.show_archive_browser(path)
+            except Exception as e:
+                self.show_error("Ошибка", f"Не удалось открыть браузер архива:\n{e}")
+        else:
+            # Обрабатываем весь архив
             self.translate_source = path
             self.translate_source_type = "archive"
             self.translate_source_label.config(text=f"Архив: {os.path.basename(path)}", fg="#27ae60")
             self.log_message("translate", f"✅ Выбран архив: {os.path.basename(path)}")
-    
     def select_folder_translate(self):
         """Выбор папки для перевода"""
         path = filedialog.askdirectory(title="Выберите папку")
@@ -1562,10 +1582,244 @@ class TranslatorApp:
     def show_help(self):
         """Показать помощь"""
         HelpDialog(self.root)
+    
+    def show_archive_browser(self, archive_path):
+        """Показывает браузер содержимого архива"""
+        try:
+        # Создаём браузер напрямую, без try-except внутри
+            browser = ArchiveBrowserDialog(self.root, self, archive_path)
+        except Exception as e:
+            self.show_error("Ошибка", f"Не удалось открыть браузер архива:\n{str(e)}")
 
 # ===================================================================
 # ДИАЛОГОВЫЕ ОКНА
 # ===================================================================
+
+class ArchiveBrowserDialog:
+    def __init__(self, parent, app, archive_path):
+        self.app = app
+        self.archive_path = archive_path
+        self.selected_items = []
+        self.temp_dir = None
+        
+        # ИСПРАВЛЕНИЕ: Создаём диалог БЕЗ parent, чтобы избежать проблем
+        self.dialog = tk.Toplevel()
+        self.dialog.title(f"📦 Содержимое: {os.path.basename(archive_path)}")
+        self.dialog.geometry("700x500")
+        self.dialog.resizable(True, True)
+        
+        # Делаем окно модальным
+        self.dialog.grab_set()
+        self.dialog.focus_set()
+        
+        # Центрируем окно
+        self.dialog.update_idletasks()
+        screen_width = self.dialog.winfo_screenwidth()
+        screen_height = self.dialog.winfo_screenheight()
+        x = (screen_width - 700) // 2
+        y = (screen_height - 500) // 2
+        self.dialog.geometry(f"700x500+{x}+{y}")
+        
+        # Заголовок
+        header = tk.Frame(self.dialog, bg="#3498db", height=60)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        
+        tk.Label(header, text="📦 Выберите файлы/папки из архива",
+                font=("Segoe UI", 14, "bold"), bg="#3498db", fg="white").pack(pady=15)
+        
+        # Инструкция
+        info_frame = tk.Frame(self.dialog, bg="#e8f4f8")
+        info_frame.pack(fill="x", padx=10, pady=10)
+        
+        tk.Label(info_frame, 
+                text="Выберите файлы или папки для перевода. Можно выбрать несколько элементов (Ctrl+клик).",
+                font=("Segoe UI", 9), bg="#e8f4f8", fg="#2c3e50").pack(pady=8, padx=10)
+        
+        # Список файлов
+        list_frame = tk.Frame(self.dialog, bg="white")
+        list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side="right", fill="y")
+        
+        self.tree = ttk.Treeview(list_frame, yscrollcommand=scrollbar.set, selectmode="extended")
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=self.tree.yview)
+        
+        # Настройка колонок
+        self.tree['columns'] = ('type', 'size')
+        self.tree.column('#0', width=400, minwidth=200)
+        self.tree.column('type', width=100, minwidth=80)
+        self.tree.column('size', width=100, minwidth=80)
+        
+        self.tree.heading('#0', text='Имя', anchor='w')
+        self.tree.heading('type', text='Тип', anchor='w')
+        self.tree.heading('size', text='Размер', anchor='w')
+        
+        # Кнопки выбора
+        select_frame = tk.Frame(self.dialog, bg="white")
+        select_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Button(select_frame, text="✅ Выбрать всё", 
+                  command=self.select_all, width=15).pack(side="left", padx=5)
+        ttk.Button(select_frame, text="❌ Снять всё",
+                  command=self.deselect_all, width=15).pack(side="left", padx=5)
+        
+        # Статус
+        self.status_label = tk.Label(self.dialog, text="Загрузка...", 
+                                     bg="#ecf0f1", fg="#2c3e50", 
+                                     font=("Segoe UI", 9), anchor="w", padx=10)
+        self.status_label.pack(fill="x")
+        
+        # Кнопки действий
+        btn_frame = tk.Frame(self.dialog, bg="white")
+        btn_frame.pack(fill="x", padx=10, pady=15)
+        
+        ttk.Button(btn_frame, text="✅ Выбрать выделенные",
+                  command=self.confirm_selection, width=25).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="❌ Отмена",
+                  command=self.cancel, width=25).pack(side="left", padx=5)
+        
+        self.dialog.protocol("WM_DELETE_WINDOW", self.cancel)
+        
+        # Загружаем содержимое ПОСЛЕ создания всего интерфейса
+        self.dialog.after(100, self.load_archive_content)
+    
+    def load_archive_content(self):
+        """Загружает и отображает содержимое архива"""
+        try:
+            self.temp_dir = tempfile.mkdtemp(prefix='archive_browse_')
+            
+            if not extract_archive(self.archive_path, self.temp_dir):
+                ErrorDialog(self.dialog, "Ошибка", "Не удалось распаковать архив")
+                self.cancel()
+                return
+            
+            items = []
+            for root, dirs, files in os.walk(self.temp_dir):
+                for dir_name in dirs:
+                    full_path = os.path.join(root, dir_name)
+                    rel_path = os.path.relpath(full_path, self.temp_dir)
+                    file_count = sum([len(f) for _, _, f in os.walk(full_path)])
+                    
+                    items.append({
+                        'name': rel_path,
+                        'type': '📁 Папка',
+                        'size': f'{file_count} файлов',
+                        'full_path': full_path,
+                        'is_dir': True
+                    })
+                
+                for file_name in files:
+                    if file_name.endswith(('.txt', '.json', '.yml', '.xml')):
+                        full_path = os.path.join(root, file_name)
+                        rel_path = os.path.relpath(full_path, self.temp_dir)
+                        
+                        try:
+                            size = os.path.getsize(full_path)
+                            size_str = self.format_size(size)
+                        except:
+                            size_str = "?"
+                        
+                        items.append({
+                            'name': rel_path,
+                            'type': '📄 Файл',
+                            'size': size_str,
+                            'full_path': full_path,
+                            'is_dir': False
+                        })
+            
+            items.sort(key=lambda x: (not x['is_dir'], x['name']))
+            
+            for item in items:
+                self.tree.insert('', 'end', text=item['name'], 
+                               values=(item['type'], item['size']),
+                               tags=(item['full_path'],))
+            
+            self.status_label.config(
+                text=f"Найдено: {len([i for i in items if not i['is_dir']])} файлов, "
+                     f"{len([i for i in items if i['is_dir']])} папок",
+                bg="#27ae60", fg="white"
+            )
+        
+        except Exception as e:
+            ErrorDialog(self.dialog, "Ошибка", f"Не удалось загрузить архив:\n{e}")
+            self.cancel()
+    
+    def format_size(self, size):
+        """Форматирует размер файла"""
+        for unit in ['Б', 'КБ', 'МБ', 'ГБ']:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} ТБ"
+    
+    def select_all(self):
+        """Выбрать все элементы"""
+        for item in self.tree.get_children():
+            self.tree.selection_add(item)
+    
+    def deselect_all(self):
+        """Снять выбор со всех элементов"""
+        self.tree.selection_remove(self.tree.get_children())
+    
+    def confirm_selection(self):
+        """Подтверждение выбора"""
+        selected = self.tree.selection()
+        
+        if not selected:
+            ErrorDialog(self.dialog, "Ошибка", "Не выбрано ни одного элемента!")
+            return
+        
+        selected_paths = []
+        for item in selected:
+            tags = self.tree.item(item, 'tags')
+            if tags:
+                selected_paths.append(tags[0])
+        
+        if not selected_paths:
+            ErrorDialog(self.dialog, "Ошибка", "Не удалось получить выбранные элементы!")
+            return
+        
+        result_dir = tempfile.mkdtemp(prefix='selected_')
+        
+        for path in selected_paths:
+            if os.path.isdir(path):
+                rel_path = os.path.relpath(path, self.temp_dir)
+                dest = os.path.join(result_dir, rel_path)
+                shutil.copytree(path, dest)
+            else:
+                rel_path = os.path.relpath(path, self.temp_dir)
+                dest = os.path.join(result_dir, rel_path)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copy2(path, dest)
+        
+        self.app.translate_source = result_dir
+        self.app.translate_source_type = "folder"
+        self.app.translate_source_label.config(
+            text=f"Из архива: {len(selected)} элементов",
+            fg="#27ae60"
+        )
+        self.app.log_message("translate", 
+                            f"✅ Выбрано {len(selected)} элементов из архива {os.path.basename(self.archive_path)}")
+        
+        self.cleanup()
+        self.dialog.destroy()
+    
+    def cancel(self):
+        """Отмена"""
+        self.cleanup()
+        self.dialog.destroy()
+    
+    def cleanup(self):
+        """Очистка временных файлов"""
+        if self.temp_dir and os.path.exists(self.temp_dir):
+            try:
+                shutil.rmtree(self.temp_dir)
+            except:
+                pass
+
 
 class ErrorDialog:
     def __init__(self, parent, title, message):
@@ -1598,7 +1852,7 @@ class YesNoDialog:
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(title)
-        self.dialog.geometry("450x220")
+        self.dialog.geometry("600x400")
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         self.dialog.grab_set()
@@ -1783,11 +2037,20 @@ class SettingsDialog:
         # Сохраняем конфигурацию
         if save_config(self.app.config):
             # Обновляем статус-бар
-            self.app.status_bar.config(text="✅ API ключ настроен и готов к работе", fg="#27ae60")
-            InfoDialog(self.dialog, "Успех", "Настройки сохранены!\n\nAPI ключ готов к использованию.")
+            self.app.status_bar.config(text="✅ API ключ настроен и готов к работе", bg="#27ae60", fg="white")
+            
+            # Показываем успешное сообщение
+            InfoDialog(self.dialog, "Успех", 
+                      f"Настройки сохранены!\n\n"
+                      f"API ключ: {api_key[:10]}...{api_key[-5:]}\n"
+                      f"Сохранён в: {CONFIG_FILE}")
+            
+            # Закрываем окно настроек
             self.dialog.destroy()
         else:
-            ErrorDialog(self.dialog, "Ошибка", "Не удалось сохранить настройки")
+            ErrorDialog(self.dialog, "Ошибка", 
+                       f"Не удалось сохранить настройки в файл {CONFIG_FILE}")
+            
 class HelpDialog:
     def __init__(self, parent):
         self.dialog = tk.Toplevel(parent)
@@ -1833,9 +2096,8 @@ class HelpDialog:
    • Обычный текст - построчный перевод текстовых файлов
 
 2. Выберите источник:
-   • Архив - для .zip, .tar файлов
+   • Архив - для .zip, .tar файлов (с возможностью выбора конкретных файлов!)
    • Папка - для поиска файлов в папке
-   • Файл - для перевода одного файла
 
 3. (Опционально) Загрузите существующие переводы, чтобы не переводить повторно
 
@@ -1852,10 +2114,9 @@ class HelpDialog:
 Шаги:
 1. Загрузите переводы (из файла или папки)
 
-2. Выберите оригинальные файлы:
-   • Один файл - для применения к одному файлу
-   • Папка - для обработки всех файлов в папке
-   • Архив - для распаковки и обработки архива
+2. Выберите источник:
+   • Архив - для .zip, .tar файлов (с возможностью выбора конкретных файлов!)
+   • Папка - для поиска файлов в папке
 
 3. Укажите, куда сохранить результат:
    • Файл - если обрабатывается один файл
@@ -1924,6 +2185,11 @@ class HelpDialog:
 • Следите за лимитом символов в DeepL (500,000/месяц для free)
 • Храните резервные копии оригинальных файлов
 
+📦 Браузер архивов - теперь вы можете:
+   • Просматривать содержимое архива перед обработкой
+   • Выбирать конкретные файлы и папки для перевода
+   • Использовать Ctrl+клик для множественного выбора
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📋 ПОДДЕРЖИВАЕМЫЕ ФОРМАТЫ
@@ -1943,7 +2209,7 @@ class HelpDialog:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Автор: NeR1cH (Enhanced by Claude)
-Версия: 3.0 - Full GUI Edition
+Версия: Версия: 3.1 - Archive Browser Edition
         """
         
         tk.Label(content, text=help_text.strip(), font=("Consolas", 9),
