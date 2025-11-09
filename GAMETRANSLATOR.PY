@@ -1667,6 +1667,19 @@ class SettingsDialog:
         self.api_entry.pack(fill="x", pady=5)
         self.api_entry.insert(0, self.app.api_key)
         
+        # Включаем стандартные горячие клавиши для Windows
+        self.api_entry.bind('<Control-v>', lambda e: self.paste_text())
+        self.api_entry.bind('<Control-V>', lambda e: self.paste_text())
+        self.api_entry.bind('<Control-a>', lambda e: self.select_all())
+        self.api_entry.bind('<Control-A>', lambda e: self.select_all())
+        self.api_entry.bind('<Control-c>', lambda e: self.copy_text())
+        self.api_entry.bind('<Control-C>', lambda e: self.copy_text())
+        self.api_entry.bind('<Control-x>', lambda e: self.cut_text())
+        self.api_entry.bind('<Control-X>', lambda e: self.cut_text())
+        
+        # Добавляем контекстное меню (правая кнопка мыши)
+        self.setup_context_menu()
+        
         # Инструкция
         info_frame = tk.LabelFrame(content, text="Как получить API ключ", 
                                   bg="white", font=("Segoe UI", 10, "bold"),
@@ -1697,7 +1710,66 @@ class SettingsDialog:
         ttk.Button(btn_frame, text="Отмена",
                   command=self.dialog.destroy, width=20).pack(side="left", padx=5)
     
+    def setup_context_menu(self):
+        """Создаёт контекстное меню для поля ввода"""
+        self.context_menu = tk.Menu(self.api_entry, tearoff=0)
+        self.context_menu.add_command(label="Вырезать (Ctrl+X)", command=self.cut_text)
+        self.context_menu.add_command(label="Копировать (Ctrl+C)", command=self.copy_text)
+        self.context_menu.add_command(label="Вставить (Ctrl+V)", command=self.paste_text)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Выделить всё (Ctrl+A)", command=self.select_all)
+        
+        self.api_entry.bind("<Button-3>", self.show_context_menu)
+    
+    def show_context_menu(self, event):
+        """Показывает контекстное меню"""
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+    
+    def paste_text(self):
+        """Вставка из буфера обмена"""
+        try:
+            text = self.dialog.clipboard_get()
+            if self.api_entry.selection_present():
+                self.api_entry.delete(tk.SEL_FIRST, tk.SEL_LAST)
+            self.api_entry.insert(tk.INSERT, text)
+        except:
+            pass
+        return "break"
+    
+    def copy_text(self):
+        """Копирование в буфер обмена"""
+        try:
+            if self.api_entry.selection_present():
+                text = self.api_entry.selection_get()
+                self.dialog.clipboard_clear()
+                self.dialog.clipboard_append(text)
+        except:
+            pass
+        return "break"
+    
+    def cut_text(self):
+        """Вырезание в буфер обмена"""
+        try:
+            if self.api_entry.selection_present():
+                text = self.api_entry.selection_get()
+                self.dialog.clipboard_clear()
+                self.dialog.clipboard_append(text)
+                self.api_entry.delete(tk.SEL_FIRST, tk.SEL_LAST)
+        except:
+            pass
+        return "break"
+    
+    def select_all(self):
+        """Выделение всего текста"""
+        self.api_entry.select_range(0, tk.END)
+        self.api_entry.icursor(tk.END)
+        return "break"
+    
     def save(self):
+        """Сохранение настроек"""
         api_key = self.api_entry.get().strip()
         
         if not api_key:
@@ -1716,7 +1788,6 @@ class SettingsDialog:
             self.dialog.destroy()
         else:
             ErrorDialog(self.dialog, "Ошибка", "Не удалось сохранить настройки")
-
 class HelpDialog:
     def __init__(self, parent):
         self.dialog = tk.Toplevel(parent)
