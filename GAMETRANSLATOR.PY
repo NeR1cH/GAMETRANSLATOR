@@ -2,22 +2,18 @@
 # -*- coding: utf-8 -*-
 
 """
-DeepL Game Translator - Профессиональный переводчик игр (Full GUI Edition)
-===========================================================================
+DeepL Game Translator v3.3 - ИСПРАВЛЕННАЯ ВЕРСИЯ
+=================================================
 
-УСТАНОВКА ЗАВИСИМОСТЕЙ:
------------------------
-pip install requests
+НОВЫЕ ВОЗМОЖНОСТИ:
+- ✅ Автосохранение каждые 10 строк
+- ✅ Кнопка паузы/возобновления
+- ✅ Исправлено сохранение в формате игры
+- ✅ Улучшенный конвертор
+- ✅ Защита от потери данных
 
-ПОЛУЧЕНИЕ API КЛЮЧА:
---------------------
-1. Зарегистрируйся на DeepL: https://www.deepl.com/pro-api
-2. Выбери бесплатный план (500,000 символов/месяц)
-3. Скопируй API ключ из личного кабинета
-4. Вставь его в программе через настройки
-
-Автор: NeR1cH 
-Версия: 3.2 - Archive Browser Edition and UI Improvements
+Автор: NeR1cH
+Версия: 3.3 - Autosave & Pause Edition
 """
 
 import sys
@@ -204,13 +200,15 @@ def load_translations_from_folder(folder_path):
 def save_translations_to_file(file_path, translations):
     """Сохраняет переводы в файл"""
     try:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True) if os.path.dirname(file_path) else None
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write("# Переводы игры (DeepL)\n")
             f.write(f"# Всего фраз: {len(translations)}\n\n")
             for eng, rus in sorted(translations.items()):
                 f.write(f"{eng} = {rus}\n")
         return True
-    except:
+    except Exception as e:
+        print(f"Ошибка сохранения: {e}")
         return False
 
 def translate_with_deepl(text, api_key, source_lang='EN', target_lang='RU', retry=3):
@@ -259,11 +257,15 @@ def translate_with_deepl(text, api_key, source_lang='EN', target_lang='RU', retr
     return None, "Не удалось перевести"
 
 def apply_translations_to_file(original_file, translations, output_file):
-    """Применяет переводы к файлу"""
+    """
+    ИСПРАВЛЕННАЯ версия применения переводов
+    Сохраняет точный формат оригинала
+    """
     try:
         with open(original_file, 'r', encoding='utf-8') as f:
             content = f.read()
-    except:
+    except Exception as e:
+        print(f"Ошибка чтения файла: {e}")
         return False, 0
     
     pattern = r'"([^"]*)"'
@@ -271,6 +273,7 @@ def apply_translations_to_file(original_file, translations, output_file):
     
     if not matches:
         try:
+            os.makedirs(os.path.dirname(output_file), exist_ok=True) if os.path.dirname(output_file) else None
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write(content)
             return True, 0
@@ -287,7 +290,16 @@ def apply_translations_to_file(original_file, translations, output_file):
         if not original_text.strip():
             continue
         
-        translated_text = translations.get(original_text)
+        translated_text = None
+        
+        # Точное совпадение
+        if original_text in translations:
+            translated_text = translations[original_text]
+        else:
+            # Поиск по английским частям
+            english_part = extract_english_parts(original_text)
+            if english_part and english_part in translations:
+                translated_text = translations[english_part]
         
         if translated_text:
             old_match = f'"{original_text}"'
@@ -306,11 +318,14 @@ def apply_translations_to_file(original_file, translations, output_file):
             replaced_count += 1
     
     try:
+        os.makedirs(os.path.dirname(output_file), exist_ok=True) if os.path.dirname(output_file) else None
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(translated_content)
         return True, replaced_count
-    except:
+    except Exception as e:
+        print(f"Ошибка записи файла: {e}")
         return False, 0
+
 
 # ===================================================================
 # ГЛАВНОЕ ОКНО ПРИЛОЖЕНИЯ
@@ -330,6 +345,15 @@ class TranslatorApp:
         self.center_window()
         self.setup_style()
         self.create_ui()
+        # Переменные для управления процессом перевода
+        self.translation_paused = False
+        self.translation_running = False
+        self.current_translation_progress = {
+            'translated': {},
+            'current_index': 0,
+            'total': 0,
+            'texts': []
+}
     
         # Проверяем наличие API ключа
         if not self.api_key:
@@ -373,7 +397,50 @@ class TranslatorApp:
         style.configure("Accent.TButton",
                        font=("Segoe UI", 10, "bold"),
                        padding=10)
+    def log_message(self, tab, message):
+        """Добавление сообщения в лог"""
+        if tab == "translate":
+            self.translate_log.insert(tk.END, message + "\n")
+            self.translate_log.see(tk.END)
+        elif tab == "apply":
+            self.apply_log.insert(tk.END, message + "\n")
+            self.apply_log.see(tk.END)
+        elif tab == "verify":
+            self.verify_log.insert(tk.END, message + "\n")
+            self.verify_log.see(tk.END)
+        elif tab == "convert":
+            self.convert_log.insert(tk.END, message + "\n")
+            self.convert_log.see(tk.END)
+        
+        self.root.update()
     
+    def show_error(self, title, message):
+        """Показать ошибку"""
+        ErrorDialog(self.root, title, message)
+    
+    def show_info(self, title, message):
+        """Показать информацию"""
+        InfoDialog(self.root, title, message)
+    
+    def ask_yes_no(self, title, message):
+        """Спросить да/нет"""
+        return YesNoDialog(self.root, title, message).result
+
+    def show_settings(self):
+        """Показать настройки"""
+        SettingsDialog(self.root, self)
+    
+    def show_help(self):
+        """Показать помощь"""
+        HelpDialog(self.root)
+    
+    def show_archive_browser(self, archive_path):
+        """Показывает браузер содержимого архива"""
+        try:
+            browser = ArchiveBrowserDialog(self.root, self, archive_path)
+        except Exception as e:
+            self.show_error("Ошибка", f"Не удалось открыть браузер архива:\n{str(e)}")
+
     def create_ui(self):
         """Создание интерфейса"""
         # Заголовок
@@ -500,12 +567,14 @@ class TranslatorApp:
         # Кнопки действий
         action_frame = tk.Frame(content, bg="white")
         action_frame.pack(fill="x", padx=20, pady=20)
-        
-        ttk.Button(action_frame, text="▶️ Начать перевод",
-                  command=self.start_translation,
-                  style="Accent.TButton", width=25).pack(side="left", padx=5)
+
+        ttk.Button(action_frame, text="▶️ Начать/Продолжить",
+                command=self.start_translation,
+                style="Accent.TButton", width=20).pack(side="left", padx=5)
+        ttk.Button(action_frame, text="⏸️ Пауза",
+                command=self.pause_translation, width=15).pack(side="left", padx=5)
         ttk.Button(action_frame, text="💾 Сохранить результат",
-                  command=self.save_translation_result, width=25).pack(side="left", padx=5)
+                command=self.save_translation_result, width=20).pack(side="left", padx=5)
         
         # Данные
         self.translate_source = None
@@ -890,7 +959,7 @@ class TranslatorApp:
         self.log_message("translate", "🗑️ Существующие переводы очищены")
     
     def start_translation(self):
-        """Запуск процесса перевода"""
+        """Запуск процесса перевода с автосохранением и паузой"""
         if not self.api_key:
             self.show_error("Ошибка", "API ключ не настроен! Перейдите в Настройки.")
             return
@@ -899,11 +968,19 @@ class TranslatorApp:
             self.show_error("Ошибка", "Не выбран источник для перевода!")
             return
         
+        # Проверяем, возобновляем ли мы перевод
+        if self.translation_running and self.translation_paused:
+            self.resume_translation()
+            return
+        
+        self.translation_running = True
+        self.translation_paused = False
+        
         self.log_message("translate", "\n" + "="*50)
-        self.log_message("translate", "🚀 НАЧАЛО ПЕРЕВОДА")
+        self.log_message("translate", "🚀 НАЧАЛО ПЕРЕВОДА (v3.3 - с автосохранением)")
         self.log_message("translate", "="*50)
         
-        # Извлечение текстов
+        # Извлечение текстов (без изменений)
         self.log_message("translate", "🔍 Поиск текстов для перевода...")
         
         texts_to_translate = []
@@ -954,18 +1031,44 @@ class TranslatorApp:
             self.show_info("Готово", "Все тексты уже переведены!")
             return
         
-        # Перевод
-        self.log_message("translate", f"\n🌐 Начинаю перевод {len(new_texts)} фраз...")
-        self.translate_progress['maximum'] = len(new_texts)
-        self.translate_progress['value'] = 0
+        # Инициализация прогресса
+        self.current_translation_progress = {
+            'translated': dict(self.existing_translations),
+            'current_index': 0,
+            'total': len(new_texts),
+            'texts': new_texts
+        }
         
-        self.current_translations = dict(self.existing_translations)
+        # Начинаем перевод
+        self.perform_translation()
+
+    def perform_translation(self):
+        """Выполняет перевод с автосохранением каждые 10 строк"""
+        progress = self.current_translation_progress
+        new_texts = progress['texts']
         
-        for i, text in enumerate(new_texts, 1):
-            self.translate_progress['value'] = i
-            percent = (i / len(new_texts)) * 100
+        self.translate_progress['maximum'] = progress['total']
+        
+        import datetime
+        autosave_folder = os.path.join(tempfile.gettempdir(), "deepl_autosave")
+        os.makedirs(autosave_folder, exist_ok=True)
+        
+        self.log_message("translate", f"💾 Автосохранения в: {autosave_folder}\n")
+        
+        for i in range(progress['current_index'], progress['total']):
+            # Проверка паузы
+            if self.translation_paused:
+                self.log_message("translate", "\n⏸️ ПЕРЕВОД ПРИОСТАНОВЛЕН")
+                self.log_message("translate", f"📊 Переведено: {i}/{progress['total']}")
+                self.log_message("translate", f"💾 Прогресс сохранён. Нажмите 'Начать перевод' для продолжения")
+                progress['current_index'] = i
+                return
             
-            self.log_message("translate", f"[{i}/{len(new_texts)}] ({percent:.1f}%) {text[:50]}...")
+            text = new_texts[i]
+            self.translate_progress['value'] = i + 1
+            percent = ((i + 1) / progress['total']) * 100
+            
+            self.log_message("translate", f"[{i+1}/{progress['total']}] ({percent:.1f}%) {text[:50]}...")
             self.root.update()
             
             result = translate_with_deepl(text, self.api_key)
@@ -973,70 +1076,221 @@ class TranslatorApp:
             if isinstance(result, tuple):
                 self.log_message("translate", f"   ❌ Ошибка: {result[1]}")
             else:
-                self.current_translations[text] = result
+                progress['translated'][text] = result
                 self.log_message("translate", f"   ✅ {result[:50]}...")
+            
+            # АВТОСОХРАНЕНИЕ КАЖДЫЕ 10 СТРОК
+            if (i + 1) % 10 == 0:
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                autosave_file = os.path.join(autosave_folder, f"autosave_{timestamp}.txt")
+                
+                if save_translations_to_file(autosave_file, progress['translated']):
+                    self.log_message("translate", f"   💾 Автосохранение: {i+1} фраз → {os.path.basename(autosave_file)}")
             
             time.sleep(0.3)
         
+        # Перевод завершён
+        self.current_translations = progress['translated']
+        self.translation_running = False
+        self.translation_paused = False
+        
+        # Финальное сохранение
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        final_save = os.path.join(autosave_folder, f"final_{timestamp}.txt")
+        save_translations_to_file(final_save, self.current_translations)
+        
         self.log_message("translate", f"\n✅ Перевод завершён!")
         self.log_message("translate", f"📊 Переведено: {len(self.current_translations)}")
-        self.show_info("Готово", f"Переведено {len(self.current_translations)} фраз!")
-    
+        self.log_message("translate", f"💾 Финальный файл: {os.path.basename(final_save)}")
+        self.log_message("translate", f"📁 Папка автосохранений: {autosave_folder}")
+        
+        self.show_info("Готово", 
+                    f"Переведено {len(self.current_translations)} фраз!\n\n"
+                    f"💾 Автосохранения в:\n{autosave_folder}\n\n"
+                    f"📄 Финальный файл:\n{os.path.basename(final_save)}")
+        
+    def pause_translation(self):
+        """Приостановить перевод"""
+        if self.translation_running and not self.translation_paused:
+            self.translation_paused = True
+            self.status_bar.config(text="⏸️ Перевод приостановлен - нажмите 'Начать перевод' для продолжения", 
+                                bg="#f39c12", fg="white")
+            self.log_message("translate", "\n⏸️ Запрос на приостановку перевода...")
+
+    def resume_translation(self):
+        """Возобновить перевод"""
+        if self.translation_running and self.translation_paused:
+            self.translation_paused = False
+            self.status_bar.config(text="▶️ Перевод возобновлён", bg="#27ae60", fg="white")
+            self.log_message("translate", "\n▶️ ВОЗОБНОВЛЕНИЕ ПЕРЕВОДА")
+            self.log_message("translate", f"📊 Продолжаем с позиции: {self.current_translation_progress['current_index']}")
+            self.perform_translation()
     def save_translation_result(self):
-        """Сохранение результатов перевода"""
-        if not self.current_translations:
-            self.show_error("Ошибка", "Нет переводов для сохранения!")
-            return
-        
-        # Проверяем, нужна ли автоматическая конвертация
-        if self.convert_on_translate.get():
-            self.log_message("translate", "\n🔄 Автоматическая конвертация включена")
-            
-            if not self.convert_original_path or not self.convert_output_path:
-                choice = self.ask_yes_no("Настройка конвертации",
-                                        "Для автоматической конвертации нужно настроить:\n"
-                                        "• Папку с оригинальными файлами\n"
-                                        "• Папку для результата\n\n"
-                                        "Перейти на вкладку конвертации для настройки?")
-                if choice:
-                    self.notebook.select(3)  # Переключаемся на вкладку конвертации
-                return
-            
-            # Выполняем конвертацию
-            self.log_message("translate", "🔄 Конвертирую переводы в формат игры...")
-            success = self.perform_conversion(self.current_translations)
-            
-            if success:
-                self.log_message("translate", "✅ Конвертация завершена!")
-                self.show_info("Успех", "Переводы сконвертированы и сохранены в формате игры!")
-            return
-        
-        # Обычное сохранение
-        choice = self.ask_yes_no("Способ сохранения", 
-                                 "Как сохранить переводы?\n\n"
-                                 "ДА - В один файл\n"
-                                 "НЕТ - С сохранением структуры")
-        
-        if choice is None:
-            return
-        
-        if choice:
-            # Сохранение в один файл
-            path = filedialog.asksaveasfilename(
-                title="Сохранить переводы",
-                defaultextension=".txt",
-                filetypes=[("Text files", "*.txt")]
-            )
-            if path:
-                if save_translations_to_file(path, self.current_translations):
-                    self.show_info("Успех", f"Сохранено {len(self.current_translations)} переводов!")
-                    self.log_message("translate", f"💾 Сохранено в: {path}")
-        else:
-            # Сохранение со структурой
-            folder = filedialog.askdirectory(title="Выберите папку для сохранения")
-            if folder:
-                # TODO: Реализовать сохранение со структурой
-                self.show_info("Информация", "Сохранение со структурой в разработке")
+            """Сохранение результатов перевода"""
+            if not self.current_translations:
+                    self.show_error("Ошибка", "Нет переводов для сохранения!")
+                    return
+                
+                # Проверяем, нужна ли автоматическая конвертация
+            if self.convert_on_translate.get():
+                    self.log_message("translate", "\n🔄 Автоматическая конвертация включена")
+                    
+                    if not self.convert_original_path or not self.convert_output_path:
+                        choice = self.ask_yes_no("Настройка конвертации",
+                                                "Для автоматической конвертации нужно настроить:\n"
+                                                "• Папку/архив с оригинальными файлами\n"
+                                                "• Папку для результата\n\n"
+                                                "Перейти на вкладку конвертации для настройки?")
+                        if choice:
+                            self.notebook.select(3)  # Переключаемся на вкладку конвертации
+                        return
+                    
+                    # Сначала сохраняем переводы в файл
+                    import datetime
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    temp_trans_file = os.path.join(tempfile.gettempdir(), f"translations_{timestamp}.txt")
+                    
+                    if save_translations_to_file(temp_trans_file, self.current_translations):
+                        self.log_message("translate", f"💾 Переводы сохранены во временный файл")
+                        
+                        # Выполняем конвертацию
+                        self.log_message("translate", "🔄 Конвертирую переводы в формат игры...")
+                        success = self.perform_conversion(self.current_translations)
+                        
+                        if success:
+                            self.log_message("translate", "✅ Конвертация завершена!")
+                            
+                            # Предлагаем сохранить и обычный файл с переводами
+                            choice = self.ask_yes_no("Сохранить исходные переводы?",
+                                                    "Файлы в формате игры созданы!\n\n"
+                                                    "Хотите также сохранить переводы\n"
+                                                    "в формате 'оригинал = перевод' для архива?")
+                            if choice:
+                                path = filedialog.asksaveasfilename(
+                                    title="Сохранить переводы",
+                                    defaultextension=".txt",
+                                    filetypes=[("Text files", "*.txt")],
+                                    initialfile=f"translations_{timestamp}.txt"
+                                )
+                                if path:
+                                    shutil.copy2(temp_trans_file, path)
+                                    self.log_message("translate", f"💾 Копия сохранена в: {path}")
+                            
+                            # Удаляем временный файл
+                            try:
+                                os.remove(temp_trans_file)
+                            except:
+                                pass
+                            
+                            self.show_info("Успех!", 
+                                        f"✅ Переводы сконвертированы и сохранены!\n\n"
+                                        f"📁 Результат в: {os.path.basename(self.convert_output_path)}\n"
+                                        f"📊 Переведено фраз: {len(self.current_translations)}")
+                        else:
+                            # Если конвертация не удалась, сохраняем обычным способом
+                            try:
+                                os.remove(temp_trans_file)
+                            except:
+                                pass
+                    return
+                
+                # Обычное сохранение (без автоконвертации)
+            choice = self.ask_yes_no("Способ сохранения", 
+                                        "Как сохранить переводы?\n\n"
+                                        "ДА - В один файл (формат: оригинал = перевод)\n"
+                                        "НЕТ - Сразу в формат игры с сохранением структуры")
+                
+            if choice is None:
+                    return
+                
+            if choice:
+                    # Сохранение в один файл
+                    import datetime
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    path = filedialog.asksaveasfilename(
+                        title="Сохранить переводы",
+                        defaultextension=".txt",
+                        filetypes=[("Text files", "*.txt")],
+                        initialfile=f"translations_{timestamp}.txt"
+                    )
+                    if path:
+                        if save_translations_to_file(path, self.current_translations):
+                            self.show_info("Успех", 
+                                        f"✅ Сохранено {len(self.current_translations)} переводов!\n\n"
+                                        f"📄 Файл: {os.path.basename(path)}")
+                            self.log_message("translate", f"💾 Сохранено в: {path}")
+            else:
+                    # Сохранение в формат игры
+                    if not self.translate_source or self.translate_source_type not in ["archive", "folder"]:
+                        self.show_error("Ошибка", 
+                                    "Для сохранения в формат игры нужно:\n"
+                                    "• Перевести из архива или папки\n"
+                                    "• Или настроить автоконвертацию")
+                        return
+                    
+                    output_folder = filedialog.askdirectory(title="Выберите папку для сохранения")
+                    if not output_folder:
+                        return
+                    
+                    self.log_message("translate", "\n🔄 Конвертация в формат игры...")
+                    
+                    try:
+                        # Используем исходную папку как источник структуры
+                        if self.translate_source_type == "archive":
+                            temp_dir = tempfile.mkdtemp(prefix='convert_source_')
+                            if extract_archive(self.translate_source, temp_dir):
+                                source_folder = temp_dir
+                            else:
+                                self.show_error("Ошибка", "Не удалось распаковать архив для конвертации")
+                                return
+                        else:
+                            source_folder = self.translate_source
+                        
+                        # Применяем переводы к оригинальным файлам
+                        processed_files = 0
+                        total_replaced = 0
+                        
+                        for root, dirs, files in os.walk(source_folder):
+                            for file in files:
+                                if file.endswith(('.txt', '.json', '.yml', '.xml')):
+                                    orig_path = os.path.join(root, file)
+                                    rel_path = os.path.relpath(orig_path, source_folder)
+                                    out_path = os.path.join(output_folder, rel_path)
+                                    
+                                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                                    
+                                    success, count = apply_translations_to_file(
+                                        orig_path,
+                                        self.current_translations,
+                                        out_path
+                                    )
+                                    
+                                    if success:
+                                        processed_files += 1
+                                        total_replaced += count
+                                        if count > 0:
+                                            self.log_message("translate", f"✅ {rel_path}: {count} фраз")
+                        
+                        # Очистка временной папки
+                        if self.translate_source_type == "archive":
+                            try:
+                                shutil.rmtree(temp_dir)
+                            except:
+                                pass
+                        
+                        self.log_message("translate", f"\n📊 Итого:")
+                        self.log_message("translate", f"   Обработано файлов: {processed_files}")
+                        self.log_message("translate", f"   Применено переводов: {total_replaced}")
+                        self.log_message("translate", f"   Сохранено в: {output_folder}")
+                        
+                        self.show_info("Успех!", 
+                                    f"✅ Переводы применены к файлам игры!\n\n"
+                                    f"📁 Папка: {os.path.basename(output_folder)}\n"
+                                    f"📄 Файлов: {processed_files}\n"
+                                    f"📊 Фраз: {total_replaced}")
+                    
+                    except Exception as e:
+                        self.show_error("Ошибка", f"Не удалось сконвертировать:\n{e}")
     
     # ===================================================================
     # МЕТОДЫ ДЛЯ ВКЛАДКИ КОНВЕРТАЦИИ
@@ -1116,7 +1370,7 @@ class TranslatorApp:
             self.show_info("Успех", "Конвертация завершена!")
     
     def perform_conversion(self, translations):
-        """Выполняет конвертацию переводов"""
+        """ИСПРАВЛЕННАЯ версия конвертации с точным сохранением формата"""
         if not self.convert_original_path:
             self.show_error("Ошибка", "Не выбрана папка с оригинальными файлами!")
             return False
@@ -1126,7 +1380,7 @@ class TranslatorApp:
             return False
         
         self.log_message("convert", "\n" + "="*50)
-        self.log_message("convert", "🔄 КОНВЕРТАЦИЯ ПЕРЕВОДОВ")
+        self.log_message("convert", "🔄 КОНВЕРТАЦИЯ ПЕРЕВОДОВ (v3.3)")
         self.log_message("convert", "="*50)
         
         try:
@@ -1146,51 +1400,77 @@ class TranslatorApp:
             else:
                 original_folder = self.convert_original_path
             
-            # Конвертация
             self.log_message("convert", f"🔄 Обработка файлов из: {os.path.basename(original_folder)}")
+            self.log_message("convert", f"📊 Доступно переводов: {len(translations)}\n")
             
             processed_files = 0
             total_replaced = 0
+            errors = []
             
+            # Подсчитываем файлы для прогресс-бара
+            all_files = []
             for root, dirs, files in os.walk(original_folder):
                 for file in files:
                     if file.endswith(('.txt', '.json', '.yml', '.xml')):
-                        orig_path = os.path.join(root, file)
-                        rel_path = os.path.relpath(orig_path, original_folder)
-                        out_path = os.path.join(self.convert_output_path, rel_path)
-                        
-                        # Создаём папку если нужно
-                        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                        
-                        # Применяем переводы
-                        success, count = apply_translations_to_file(
-                            orig_path,
-                            translations,
-                            out_path
-                        )
-                        
-                        if success:
-                            processed_files += 1
-                            total_replaced += count
-                            
-                            if count > 0:
-                                self.log_message("convert", f"✅ {rel_path}: {count} фраз")
-                            else:
-                                self.log_message("convert", f"⚪ {rel_path}: без изменений")
+                        all_files.append((root, file))
+            
+            self.convert_progress['maximum'] = len(all_files)
+            
+            # Обрабатываем все файлы
+            for idx, (root, file) in enumerate(all_files, 1):
+                self.convert_progress['value'] = idx
+                
+                orig_path = os.path.join(root, file)
+                rel_path = os.path.relpath(orig_path, original_folder)
+                out_path = os.path.join(self.convert_output_path, rel_path)
+                
+                # Применяем переводы
+                success, count = apply_translations_to_file(
+                    orig_path,
+                    translations,
+                    out_path
+                )
+                
+                if success:
+                    processed_files += 1
+                    total_replaced += count
+                    
+                    if count > 0:
+                        self.log_message("convert", f"✅ {rel_path}: {count} фраз")
+                    else:
+                        self.log_message("convert", f"⚪ {rel_path}: без изменений")
+                else:
+                    errors.append(rel_path)
+                    self.log_message("convert", f"❌ {rel_path}: ошибка обработки")
+                
+                self.root.update()
             
             # Очистка
             if temp_dir:
-                shutil.rmtree(temp_dir)
+                try:
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
             
-            self.log_message("convert", f"\n📊 Итого:")
+            self.log_message("convert", f"\n📊 ИТОГОВАЯ СТАТИСТИКА:")
             self.log_message("convert", f"   Обработано файлов: {processed_files}")
             self.log_message("convert", f"   Применено переводов: {total_replaced}")
+            self.log_message("convert", f"   Ошибок: {len(errors)}")
             self.log_message("convert", f"   Сохранено в: {self.convert_output_path}")
+            
+            if errors:
+                self.log_message("convert", f"\n⚠️ Файлы с ошибками ({len(errors)}):")
+                for err_file in errors[:10]:
+                    self.log_message("convert", f"   • {err_file}")
+                if len(errors) > 10:
+                    self.log_message("convert", f"   ... и ещё {len(errors) - 10}")
             
             return True
         
         except Exception as e:
-            self.log_message("convert", f"❌ Ошибка: {e}")
+            import traceback
+            self.log_message("convert", f"❌ Критическая ошибка: {e}")
+            self.log_message("convert", traceback.format_exc())
             self.show_error("Ошибка", f"Произошла ошибка при конвертации:\n{e}")
             return False
     
@@ -1552,50 +1832,7 @@ class TranslatorApp:
     # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
     # ===================================================================
     
-    def log_message(self, tab, message):
-        """Добавление сообщения в лог"""
-        if tab == "translate":
-            self.translate_log.insert(tk.END, message + "\n")
-            self.translate_log.see(tk.END)
-        elif tab == "apply":
-            self.apply_log.insert(tk.END, message + "\n")
-            self.apply_log.see(tk.END)
-        elif tab == "verify":
-            self.verify_log.insert(tk.END, message + "\n")
-            self.verify_log.see(tk.END)
-        elif tab == "convert":
-            self.convert_log.insert(tk.END, message + "\n")
-            self.convert_log.see(tk.END)
-        
-        self.root.update()
     
-    def show_error(self, title, message):
-        """Показать ошибку"""
-        ErrorDialog(self.root, title, message)
-    
-    def show_info(self, title, message):
-        """Показать информацию"""
-        InfoDialog(self.root, title, message)
-    
-    def ask_yes_no(self, title, message):
-        """Спросить да/нет"""
-        return YesNoDialog(self.root, title, message).result
-    
-    def show_settings(self):
-        """Показать настройки"""
-        SettingsDialog(self.root, self)
-    
-    def show_help(self):
-        """Показать помощь"""
-        HelpDialog(self.root)
-    
-    def show_archive_browser(self, archive_path):
-        """Показывает браузер содержимого архива"""
-        try:
-        # Создаём браузер напрямую, без try-except внутри
-            browser = ArchiveBrowserDialog(self.root, self, archive_path)
-        except Exception as e:
-            self.show_error("Ошибка", f"Не удалось открыть браузер архива:\n{str(e)}")
 
 # ===================================================================
 # ДИАЛОГОВЫЕ ОКНА
