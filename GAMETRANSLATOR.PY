@@ -87,34 +87,46 @@ def save_config(config):
 # ===================================================================
 
 def extract_english_parts(text):
-    """Извлекает английские части из текста"""
-    text = re.sub(r'\{.*?\}', '', text)
-    text = re.sub(r'%\w+%', '', text)
-    parts = re.split(r'(\s+|[.,!?:;()"\'])', text)
-    english_parts = []
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        if re.search(r'[A-Za-z]', part) and not re.search(r'[А-Яа-яЁё]', part):
-            english_parts.append(part)
-    if english_parts:
-        return ' '.join(english_parts)
+    """
+    УЛУЧШЕННАЯ версия: извлекает только английский текст,
+    сохраняя маркеры %r% и другие служебные символы
+    """
+    # Убираем маркеры временно для анализа
+    temp_text = re.sub(r'%\w+%', '', text)
+    
+    # Ищем английские слова (минимум 2 буквы)
+    english_words = re.findall(r'\b[A-Za-z]{2,}\b', temp_text)
+    
+    if english_words:
+        # Возвращаем оригинальный текст, если в нём есть английские слова
+        return text.strip()
+    
     return None
 
 def extract_english_text_from_file(file_path):
-    """Извлекает английский текст из файла"""
+    """
+    УЛУЧШЕННАЯ версия извлечения английского текста
+    Сохраняет оригинальный формат с %r% для правильного перевода
+    """
     results = []
+    
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
-            matches = re.findall(r'"(.*?)"', content, re.DOTALL)
-            for match in matches:
-                english_text = extract_english_parts(match)
-                if english_text:
-                    results.append(english_text)
-    except:
-        pass
+        
+        # Находим весь текст в кавычках
+        pattern = r'"([^"]*)"'
+        matches = re.findall(pattern, content)
+        
+        for text in matches:
+            # Проверяем, есть ли английский текст
+            if re.search(r'\b[A-Za-z]{2,}\b', text):
+                # Добавляем оригинальный текст (с %r% если они есть)
+                results.append(text)
+    
+    except Exception as e:
+        print(f"⚠️ Ошибка чтения {file_path}: {e}")
+    
     return results
 
 def extract_archive(archive_path, extract_to):
@@ -172,18 +184,40 @@ def search_folder(folder_path, extract_archives=True):
     return all_results, unique_texts, file_structure
 
 def load_translations_from_file(file_path):
-    """Загружает переводы из файла"""
+    """
+    УЛУЧШЕННАЯ версия загрузки с обработкой экранирования
+    """
     translations = {}
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if '=' in line and not line.startswith('#'):
-                        parts = line.strip().split('=', 1)
-                        if len(parts) == 2:
-                            translations[parts[0].strip()] = parts[1].strip()
-        except:
-            pass
+    
+    if not os.path.exists(file_path):
+        return translations
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                
+                # Пропускаем комментарии и пустые строки
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Ищем первый неэкранированный знак =
+                parts = line.split('=', 1)
+                
+                if len(parts) == 2:
+                    original = parts[0].strip()
+                    translated = parts[1].strip()
+                    
+                    # Убираем экранирование
+                    original = original.replace('\\=', '=')
+                    translated = translated.replace('\\=', '=')
+                    
+                    if original and translated:
+                        translations[original] = translated
+    
+    except Exception as e:
+        print(f"⚠️ Ошибка загрузки {file_path}: {e}")
+    
     return translations
 
 def load_translations_from_folder(folder_path):
@@ -198,17 +232,27 @@ def load_translations_from_folder(folder_path):
     return translations
 
 def save_translations_to_file(file_path, translations):
-    """Сохраняет переводы в файл"""
+    """
+    УЛУЧШЕННАЯ версия сохранения с экранированием
+    """
     try:
         os.makedirs(os.path.dirname(file_path), exist_ok=True) if os.path.dirname(file_path) else None
+        
         with open(file_path, 'w', encoding='utf-8') as f:
-            f.write("# Переводы игры (DeepL)\n")
-            f.write(f"# Всего фраз: {len(translations)}\n\n")
+            f.write("# Переводы игры (DeepL Game Translator)\n")
+            f.write(f"# Всего фраз: {len(translations)}\n")
+            f.write(f"# Формат: оригинал = перевод\n\n")
+            
             for eng, rus in sorted(translations.items()):
-                f.write(f"{eng} = {rus}\n")
+                # Экранируем символы = в тексте
+                eng_escaped = eng.replace('=', '\\=')
+                rus_escaped = rus.replace('=', '\\=')
+                
+                f.write(f"{eng_escaped} = {rus_escaped}\n")
+        
         return True
     except Exception as e:
-        print(f"Ошибка сохранения: {e}")
+        print(f"❌ Ошибка сохранения: {e}")
         return False
 
 def translate_with_deepl(text, api_key, source_lang='EN', target_lang='RU', retry=3):
@@ -258,20 +302,25 @@ def translate_with_deepl(text, api_key, source_lang='EN', target_lang='RU', retr
 
 def apply_translations_to_file(original_file, translations, output_file):
     """
-    ИСПРАВЛЕННАЯ версия применения переводов
-    Сохраняет точный формат оригинала
+    ПОЛНОСТЬЮ ПЕРЕРАБОТАННАЯ версия с точным сохранением структуры
+    
+    Алгоритм:
+    1. Читает файл как есть (со всеми пробелами, переносами и т.д.)
+    2. Находит текст в кавычках
+    3. Проверяет, есть ли перевод
+    4. Заменяет ТОЛЬКО текст внутри кавычек
+    5. Всё остальное (отступы, запятые, %r% и т.д.) остаётся на месте
     """
     try:
+        # Читаем оригинальный файл
         with open(original_file, 'r', encoding='utf-8') as f:
             content = f.read()
     except Exception as e:
-        print(f"Ошибка чтения файла: {e}")
+        print(f"❌ Ошибка чтения файла {original_file}: {e}")
         return False, 0
     
-    pattern = r'"([^"]*)"'
-    matches = list(re.finditer(pattern, content))
-    
-    if not matches:
+    if not content.strip():
+        # Пустой файл - просто копируем
         try:
             os.makedirs(os.path.dirname(output_file), exist_ok=True) if os.path.dirname(output_file) else None
             with open(output_file, 'w', encoding='utf-8') as f:
@@ -280,50 +329,69 @@ def apply_translations_to_file(original_file, translations, output_file):
         except:
             return False, 0
     
-    translated_content = content
-    offset = 0
-    replaced_count = 0
+    # Паттерн для поиска текста в кавычках
+    # Ищем: "любой текст (включая %r% и другие символы)"
+    pattern = r'"([^"]*)"'
     
-    for match in matches:
-        original_text = match.group(1)
+    replaced_count = 0
+    result = content
+    
+    # Находим все совпадения
+    matches = list(re.finditer(pattern, content))
+    
+    # Обрабатываем с конца, чтобы не сбивать позиции
+    for match in reversed(matches):
+        original_text = match.group(1)  # Текст без кавычек
         
+        # Пропускаем пустые строки
         if not original_text.strip():
             continue
         
         translated_text = None
         
-        # Точное совпадение
+        # 1. Пробуем точное совпадение
         if original_text in translations:
             translated_text = translations[original_text]
-        else:
-            # Поиск по английским частям
-            english_part = extract_english_parts(original_text)
-            if english_part and english_part in translations:
-                translated_text = translations[english_part]
         
+        # 2. Пробуем совпадение без маркеров %r%
+        elif original_text.replace('%r%', '').replace('%R%', '').strip() in translations:
+            clean_text = original_text.replace('%r%', '').replace('%R%', '').strip()
+            translated_text = translations[clean_text]
+        
+        # 3. Извлекаем только английский текст и ищем перевод
+        else:
+            english_part = extract_english_parts(original_text)
+            if english_part:
+                # Убираем маркеры для поиска
+                clean_english = english_part.replace('%r%', '').replace('%R%', '').strip()
+                
+                if clean_english in translations:
+                    translated_text = translations[clean_english]
+                elif english_part in translations:
+                    translated_text = translations[english_part]
+        
+        # Если нашли перевод - заменяем
         if translated_text:
-            old_match = f'"{original_text}"'
-            new_match = f'"{translated_text}"'
+            # ВАЖНО: Заменяем ТОЛЬКО текст внутри кавычек
+            # Всё остальное (кавычки, пробелы, запятые) остаётся как было
             
-            start_pos = match.start() + offset
-            end_pos = match.end() + offset
+            start_pos = match.start(1)  # Начало текста (после открывающей кавычки)
+            end_pos = match.end(1)      # Конец текста (перед закрывающей кавычкой)
             
-            translated_content = (
-                translated_content[:start_pos] + 
-                new_match + 
-                translated_content[end_pos:]
-            )
-            
-            offset += len(new_match) - len(old_match)
+            # Заменяем только содержимое между кавычками
+            result = result[:start_pos] + translated_text + result[end_pos:]
             replaced_count += 1
     
+    # Сохраняем результат
     try:
         os.makedirs(os.path.dirname(output_file), exist_ok=True) if os.path.dirname(output_file) else None
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(translated_content)
+        
+        with open(output_file, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(result)
+        
         return True, replaced_count
     except Exception as e:
-        print(f"Ошибка записи файла: {e}")
+        print(f"❌ Ошибка записи файла {output_file}: {e}")
         return False, 0
 
 
