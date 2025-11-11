@@ -1,6 +1,0 @@
-﻿{
-  "deepl_api_key": "YOUR_DEEPL_API_KEY_HERE",
-  "microsoft_api_key": "YOUR_MICROSOFT_API_KEY_HERE",
-  "microsoft_region": "global",
-  "default_translator": "deepl"
-}
