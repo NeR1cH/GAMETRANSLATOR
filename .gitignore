@@ -1,0 +1,28 @@
+﻿# Секретные файлы
+translator_config.json
+.env
+*.env
+.env.*
+*_config.json
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

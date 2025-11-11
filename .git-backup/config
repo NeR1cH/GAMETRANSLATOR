@@ -1,0 +1,19 @@
+[core]
+	repositoryformatversion = 0
+	filemode = false
+	bare = false
+	logallrefupdates = true
+	symlinks = false
+	ignorecase = true
+[branch "main"]
+	vscode-merge-base = origin/main
+[branch "fix-v1.2"]
+	vscode-merge-base = origin/main
+	vscode-merge-base = origin/temp-branch
+[branch "temp-branch"]
+	vscode-merge-base = origin/main
+[remote "origin"]
+	url = https://github.com/ВАШ_USERNAME/ВАШ_РЕПОЗИТОРИЙ.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
+[branch "backup-branch"]
+	vscode-merge-base = origin/temp-branch
