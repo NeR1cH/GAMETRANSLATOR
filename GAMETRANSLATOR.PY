@@ -115,30 +115,72 @@ def extract_archive(archive_path, extract_to):
         return False
 
 def search_folder(folder_path, extract_archives=False):
-    """Ищет файлы и извлекает текст"""
+    """Ищет файлы и извлекает текст (ВЕРСИЯ С ОТЛАДКОЙ)"""
     total_files = 0
     unique_texts = set()
     file_structure = {}
     
     text_extensions = ('.txt', '.json', '.yml', '.yaml', '.xml')
     
+    print(f"\n{'='*60}")
+    print(f"DEBUG [ПОИСК]: Сканирование папки: {folder_path}")
+    print(f"DEBUG [ПОИСК]: Ищем файлы с расширениями: {text_extensions}")
+    print(f"{'='*60}\n")
+    
     try:
+        all_files_found = []
+        
         for root, dirs, files in os.walk(folder_path):
+            print(f"DEBUG [ПОИСК]: Проверка папки: {root}")
+            print(f"DEBUG [ПОИСК]: Найдено файлов: {len(files)}")
+            
             for file in files:
+                file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, folder_path)
+                
+                # Проверяем расширение
                 if file.endswith(text_extensions):
-                    file_path = os.path.join(root, file)
-                    try:
-                        texts = extract_english_text_from_file(file_path)
-                        if texts:
-                            total_files += 1
-                            unique_texts.update(texts)
-                            rel_path = os.path.relpath(file_path, folder_path)
-                            file_structure[rel_path] = texts
-                    except:
-                        pass
+                    print(f"DEBUG [ПОИСК]: ✅ Подходит: {rel_path}")
+                    all_files_found.append((file_path, rel_path))
+                else:
+                    print(f"DEBUG [ПОИСК]: ⏭️ Пропущен (расширение): {rel_path}")
+        
+        print(f"\nDEBUG [ПОИСК]: ВСЕГО ФАЙЛОВ ДЛЯ ОБРАБОТКИ: {len(all_files_found)}\n")
+        
+        # Обрабатываем найденные файлы
+        for file_path, rel_path in all_files_found:
+            try:
+                print(f"\n{'='*60}")
+                print(f"DEBUG [ПОИСК]: Обработка файла: {rel_path}")
+                print(f"{'='*60}")
+                
+                texts = extract_english_text_from_file(file_path)
+                
+                if texts:
+                    total_files += 1
+                    unique_texts.update(texts)
+                    file_structure[rel_path] = texts
+                    print(f"DEBUG [ПОИСК]: ✅ Извлечено текстов: {len(texts)}")
+                else:
+                    print(f"DEBUG [ПОИСК]: ⚠️ Текстов не найдено")
+                
+            except Exception as e:
+                print(f"DEBUG [ПОИСК]: ❌ Ошибка обработки {rel_path}: {e}")
+                import traceback
+                print(traceback.format_exc())
+        
+        print(f"\n{'='*60}")
+        print(f"DEBUG [ПОИСК]: ИТОГО:")
+        print(f"  Обработано файлов: {total_files}")
+        print(f"  Уникальных текстов: {len(unique_texts)}")
+        print(f"{'='*60}\n")
         
         return total_files, unique_texts, file_structure
-    except:
+    
+    except Exception as e:
+        print(f"DEBUG [ПОИСК]: ❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        import traceback
+        print(traceback.format_exc())
         return 0, set(), {}
 
 # ===================================================================
@@ -156,133 +198,333 @@ def extract_english_parts(text):
     return None
 
 def extract_english_text_from_file(file_path):
-    """Извлекает английский текст из файла (ФИНАЛЬНАЯ ВЕРСИЯ)"""
+    """Извлекает английский текст из файла (ВЕРСИЯ 3.3.5 - ТОЛЬКО ОДНОСТРОЧНЫЕ ЗНАЧЕНИЯ)"""
     results = []
+    
+    print(f"\n{'='*60}")
+    print(f"DEBUG [ФАЙЛ]: Обработка файла: {file_path}")
+    print(f"{'='*60}")
     
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # Шаг 1: Собираем ВСЕ служебные ключи
-        service_keys = set()
+        print(f"DEBUG [ФАЙЛ]: Прочитано байт: {len(content)}")
+        print(f"DEBUG [ФАЙЛ]: Строк в файле: {len(content.split(chr(10)))}")
         
-        # Ключи перед двоеточием (RATING:, BAD:, OK:, etc.)
+        # Проверяем, есть ли вообще кавычки
+        quote_count = content.count('"')
+        print(f"DEBUG [ФАЙЛ]: Кавычек в файле: {quote_count}")
+        
+        # ============================================
+        # ШАГ 1: АВТОМАТИЧЕСКОЕ ОПРЕДЕЛЕНИЕ СТРУКТУРНЫХ КЛЮЧЕЙ
+        # ============================================
+        structural_keys = set()
+        
+        # 1.1. Находим все слова перед двоеточием (на любой глубине вложенности)
         for line in content.split('\n'):
             line_stripped = line.strip()
             
-            # Формат: КЛЮЧ: { или КЛЮЧ: [
-            if re.match(r'^([A-ZА-ЯЁ0-9_]+)\s*:\s*[\[\{]', line_stripped):
-                match = re.match(r'^([A-ZА-ЯЁ0-9_]+)\s*:', line_stripped)
-                if match:
-                    key = match.group(1)
-                    service_keys.add(key)
-                    service_keys.add(key.upper())
-                    service_keys.add(key.lower())
+            # ИСПРАВЛЕНИЕ: Игнорируем строки, которые являются чистыми ключами структуры
+            # Например: "BAD: [" или "RATING: {" или "SERVICE: {"
+            if re.match(r'^[A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*\s*:\s*[\[{]?\s*$', line_stripped):
+                key_match = re.match(r'^([A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*)\s*:', line_stripped)
+                if key_match:
+                    key = key_match.group(1)
+                    structural_keys.add(key)
+                    structural_keys.add(key.upper())
+                    structural_keys.add(key.lower())
+                    print(f"DEBUG: Найден структурный ключ: {key}")
+                continue
+            
+            # 1.2. Также ищем ключи в строках вида "KEY:"
+            match = re.match(r'^([A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*)\s*:', line_stripped)
+            if match:
+                key = match.group(1)
+                structural_keys.add(key)
+                structural_keys.add(key.upper())
+                structural_keys.add(key.lower())
+                print(f"DEBUG: Найден структурный ключ: {key}")
         
-        # Ключи в кавычках, которые являются просто идентификаторами
-        all_quotes = re.findall(r'"([^"]*)"', content)
-        for text in all_quotes:
-            text_stripped = text.strip()
-            # Если это ТОЛЬКО заглавные буквы, цифры и подчёркивания - это ключ
-            if re.match(r'^[A-ZА-ЯЁ0-9_]+$', text_stripped):  # ИСПРАВЛЕНО: Добавлен $
-                service_keys.add(text_stripped)
-                service_keys.add(text_stripped.upper())
-                service_keys.add(text_stripped.lower())
+        # 1.3. Добавляем жёстко зарезервированные ключи
+        RESERVED_KEYS = {
+            'RATING', 'BAD', 'OK', 'GOOD', 'ATTRACTION', 'SERVICE', 'INN', 'HOTEL',
+            'WIKI', 'NAME', 'TEXT', 'CATEGORY', 'CATEGORIES',
+            'ПЛОХО', 'ХОРОШО', 'ПРИТЯЖЕНИЕ', 'СЕРВИС', 'МНН', 'ГОСТИНИЦА'
+        }
         
-        print(f"DEBUG: Найдено служебных ключей: {len(service_keys)}")
-        print(f"DEBUG: Примеры ключей: {list(service_keys)[:20]}")
+        structural_keys.update(RESERVED_KEYS)
+        for key in RESERVED_KEYS:
+            structural_keys.add(key.upper())
+            structural_keys.add(key.lower())
         
-        # Шаг 2: Извлекаем ТОЛЬКО тексты (не ключи)
-        pattern = r'"([^"]+)"'  # Изменено с * на + (минимум 1 символ)
-        matches = re.findall(pattern, content)
+        print(f"\nDEBUG: ===================================")
+        print(f"DEBUG: Всего найдено структурных ключей: {len(structural_keys)}")
+        print(f"DEBUG: Список: {sorted(structural_keys)}")
+        print(f"DEBUG: ===================================\n")
         
-        print(f"DEBUG: Всего строк в кавычках: {len(matches)}")
+        # ============================================
+        # ШАГ 2: ИЗВЛЕЧЕНИЕ ТЕКСТОВ ИЗ КАВЫЧЕК (ТОЛЬКО ОДНОСТРОЧНЫЕ!)
+        # ============================================
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Извлекаем только строки, которые находятся на ОДНОЙ строке
+        # Это предотвращает захват многострочных кусков структуры
+        matches = []
+        lines_with_quotes = 0
+        for line_num, line in enumerate(content.split('\n'), 1):
+            # Находим все кавычки в строке
+            line_matches = re.findall(r'"([^"]+)"', line)
+            if line_matches:
+                lines_with_quotes += 1
+                print(f"DEBUG [СТРОКА {line_num}]: Найдено кавычек: {len(line_matches)}")
+                for match in line_matches:
+                    print(f"  -> {match[:80]}...")
+            matches.extend(line_matches)
+        
+        print(f"\nDEBUG [ФАЙЛ]: Строк с кавычками: {lines_with_quotes}")
+        print(f"DEBUG: Всего строк в кавычках: {len(matches)}\n")
+        
+        processed = 0
+        skipped_keys = 0
+        skipped_russian = 0
+        skipped_no_english = 0
+        skipped_placeholders = 0
+        skipped_structural = 0
         
         for text in matches:
             text_stripped = text.strip()
             
-            # Пропускаем пустые строки
+            # ============================================
+            # ФИЛЬТРЫ
+            # ============================================
+            
+            # 1. Пропускаем пустые строки
             if not text_stripped:
+                print(f"DEBUG: ⏭️ [ПУСТАЯ СТРОКА]")
                 continue
             
-            # НОВАЯ ПРОВЕРКА: Пропускаем JSON-синтаксис
-            # Строки вроде "],", "OK: [", "BAD: [", "   ],"
-            if re.match(r'^[\s,\[\]\{\}:]+$', text_stripped):  # ИСПРАВЛЕНО: Добавлен $
-                print(f"DEBUG: Пропущен JSON-синтаксис: '{text_stripped}'")
+            # 2. 🔴 ПРОПУСКАЕМ ТОЛЬКО ЧИСТЫЕ СТРУКТУРНЫЕ ЭЛЕМЕНТЫ
+            # Строки вида: "], GOOD: [" или "}, SERVICE: {" без реального текста
+            # НО разрешаем плейсхолдеры вида {FACTION}, {RACE_CITY}
+            
+            # Убираем все плейсхолдеры (слова в фигурных скобках)
+            text_without_placeholders = re.sub(r'\{[A-Z_]+\}', '', text_stripped)
+            
+            # Если после удаления плейсхолдеров остались структурные символы [] {} - это структура
+            if re.search(r'[\[\]]', text_without_placeholders):
+                print(f"DEBUG: ⏭️ [СТРУКТУРНЫЙ ЭЛЕМЕНТ] {text_stripped[:50]}...")
+                skipped_structural += 1
                 continue
             
-            # Пропускаем строки, содержащие ТОЛЬКО символы структуры JSON
-            if all(c in ' \t\n\r,[]{}:' for c in text_stripped):
-                print(f"DEBUG: Пропущена структура: '{text_stripped}'")
+            # 3. 🔴 ГЛАВНЫЙ ФИЛЬТР: Точное совпадение со структурным ключом
+            if text_stripped in structural_keys:
+                print(f"DEBUG: ⏭️ [СТРУКТУРНЫЙ КЛЮЧ] {text_stripped}")
+                skipped_keys += 1
                 continue
             
-            # Пропускаем строки с русским текстом (уже переведённые)
+            # 4. 🔴 ДОПОЛНИТЕЛЬНЫЙ ФИЛЬТР: Если текст состоит ТОЛЬКО из одного слова
+            #    в верхнем регистре И это слово короткое (≤15 символов) - вероятно ключ
+            words = text_stripped.split()
+            if len(words) == 1:
+                word = words[0]
+                # Проверяем: только буквы, все заглавные, короткое
+                if word.isupper() and word.isalpha() and len(word) <= 15:
+                    print(f"DEBUG: ⏭️ [ВЕРОЯТНЫЙ КЛЮЧ] {text_stripped}")
+                    skipped_keys += 1
+                    continue
+            
+            # 5. Пропускаем строки с русским текстом (уже переведённые)
             if re.search(r'[А-Яа-яЁё]', text):
+                print(f"DEBUG: ⏭️ [РУССКИЙ ТЕКСТ] {text[:50]}...")
+                skipped_russian += 1
                 continue
             
-            text_upper = text_stripped.upper()
-            text_lower = text_stripped.lower()
+            # 6. Проверяем наличие английских слов
+            english_words = re.findall(r'\b[A-Za-z]{2,}\b', text)
+            if not english_words:
+                print(f"DEBUG: ⏭️ [НЕТ АНГЛИЙСКИХ СЛОВ] {text_stripped[:50]}...")
+                skipped_no_english += 1
+                continue
+            else:
+                print(f"DEBUG: ✓ Английские слова найдены: {english_words[:5]}...")
             
-            # КРИТИЧЕСКИ ВАЖНО: Пропускаем ЛЮБЫЕ служебные ключи
-            if (text_stripped in service_keys or 
-                text_upper in service_keys or 
-                text_lower in service_keys):
-                print(f"DEBUG: Пропущен ключ: {text_stripped}")
+            # 7. Пропускаем строки, состоящие ТОЛЬКО из служебных символов
+            clean_check = re.sub(r'[,\[\]\{\}:\s\.]', '', text_stripped)
+            if not clean_check:
+                print(f"DEBUG: ⏭️ [ТОЛЬКО СИМВОЛЫ] {text_stripped[:50]}...")
                 continue
             
-            # Пропускаем ключи с двоеточием на конце
-            if text_stripped.endswith(':'):
-                key_without_colon = text_stripped.rstrip(':').strip()
-                if (key_without_colon in service_keys or
-                    key_without_colon.upper() in service_keys or
-                    key_without_colon.lower() in service_keys):
-                    print(f"DEBUG: Пропущен ключ с ':': {text_stripped}")
-                    continue
+            # 8. Проверяем, что английские слова есть БЕЗ плейсхолдеров
+            text_no_placeholders = re.sub(r'\{[^}]*\}', '', text)
+            text_no_placeholders = re.sub(r'%\w+%', '', text_no_placeholders)
             
-            # Пропускаем строки формата "КЛЮЧ:" или "КЛЮЧ: {" или "КЛЮЧ: ["
-            if re.match(r'^[A-ZА-ЯЁ0-9_]+\s*:\s*[\{\[]?$', text_stripped):  # ИСПРАВЛЕНО: Добавлен $
-                print(f"DEBUG: Пропущена структура ключа: '{text_stripped}'")
+            english_without_placeholders = re.findall(r'\b[A-Za-z]{2,}\b', text_no_placeholders)
+            if not english_without_placeholders:
+                print(f"DEBUG: ⏭️ [ТОЛЬКО ПЛЕЙСХОЛДЕРЫ] {text_stripped[:50]}...")
+                print(f"       Без плейсхолдеров: '{text_no_placeholders[:50]}'")
+                skipped_placeholders += 1
                 continue
             
-            # Проверяем наличие английских слов (не менее 2 букв)
-            if not re.search(r'\b[A-Za-z]{2,}\b', text):
-                continue
-            
-            # Проверяем наличие английских слов БЕЗ плейсхолдеров
-            text_without_placeholders = re.sub(r'\{[^}]*\}', '', text)
-            text_without_placeholders = re.sub(r'%\w+%', '', text_without_placeholders)
-            
-            if not re.search(r'\b[A-Za-z]{2,}\b', text_without_placeholders):
-                continue
-            
-            # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: если строка содержит ":", проверяем что после ":" есть текст
-            if ':' in text:
-                parts = text.split(':', 1)
-                before_colon = parts[0].strip().upper()
-                after_colon = parts[1].strip() if len(parts) > 1 else ""
-                
-                # Если перед ":" ключ, и после него нет текста - пропускаем
-                if before_colon in service_keys and not after_colon:
-                    print(f"DEBUG: Пропущен пустой ключ: {text}")
-                    continue
-                
-                # Если перед ":" ключ, но после него есть текст - берём ТОЛЬКО текст после ":"
-                if before_colon in service_keys and after_colon:
-                    if re.search(r'\b[A-Za-z]{2,}\b', after_colon):
-                        print(f"DEBUG: Извлечён текст после ключа: {after_colon}")
-                        results.append(after_colon)
-                    continue
-            
-            # Если все проверки пройдены - добавляем текст
-            print(f"DEBUG: Добавлен текст: {text[:50]}...")
+            # ============================================
+            # ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ - ДОБАВЛЯЕМ ТЕКСТ
+            # ============================================
+            print(f"DEBUG: ✅ ПРИНЯТ: {text[:80]}...")
             results.append(text)
+            processed += 1
         
-        print(f"DEBUG: Итого извлечено текстов: {len(results)}")
+        # Итоговая статистика
+        print(f"\n{'='*60}")
+        print(f"СТАТИСТИКА ИЗВЛЕЧЕНИЯ:")
+        print(f"{'='*60}")
+        print(f"✅ Извлечено для перевода: {processed}")
+        print(f"⏭️ Пропущено структурных элементов: {skipped_structural}")
+        print(f"⏭️ Пропущено структурных ключей: {skipped_keys}")
+        print(f"⏭️ Пропущено с русским текстом: {skipped_russian}")
+        print(f"⏭️ Пропущено без английских слов: {skipped_no_english}")
+        print(f"⏭️ Пропущено только плейсхолдеры: {skipped_placeholders}")
+        print(f"{'='*60}\n")
+        
         return results
     
     except Exception as e:
         print(f"ERROR: {e}")
+        import traceback
+        print(traceback.format_exc())
         return []
+
+
+def apply_translations_to_file(original_file, translations, output_file):
+    """Применяет переводы к файлу (ВЕРСИЯ 3.3.5 - УЛУЧШЕННАЯ ЗАЩИТА)"""
+    import re
+    import os
+    
+    try:
+        with open(original_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except Exception as e:
+        print(f"❌ Ошибка чтения файла {original_file}: {e}")
+        return False, 0
+    
+    if not content.strip():
+        try:
+            os.makedirs(os.path.dirname(output_file), exist_ok=True) if os.path.dirname(output_file) else None
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return True, 0
+        except:
+            return False, 0
+    
+    # ============================================
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ:
+    # Определяем структурные ключи ДО замены
+    # ============================================
+    structural_keys = set()
+    
+    # Находим все ключи перед двоеточием
+    for line in content.split('\n'):
+        line_stripped = line.strip()
+        
+        # УЛУЧШЕНИЕ: Игнорируем строки структуры вида "KEY: [" или "KEY: {"
+        if re.match(r'^[A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*\s*:\s*[\[{]?\s*$', line_stripped):
+            key_match = re.match(r'^([A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*)\s*:', line_stripped)
+            if key_match:
+                key = key_match.group(1)
+                structural_keys.add(key)
+                structural_keys.add(key.upper())
+                structural_keys.add(key.lower())
+        
+        # Также обычные ключи
+        match = re.match(r'^([A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*)\s*:', line_stripped)
+        if match:
+            key = match.group(1)
+            structural_keys.add(key)
+            structural_keys.add(key.upper())
+            structural_keys.add(key.lower())
+    
+    # Добавляем зарезервированные ключи
+    RESERVED_KEYS = {
+        'RATING', 'BAD', 'OK', 'GOOD', 'ATTRACTION', 'SERVICE', 'INN', 'HOTEL',
+        'WIKI', 'NAME', 'TEXT', 'CATEGORY', 'CATEGORIES',
+        'ПЛОХО', 'ХОРОШО', 'ПРИТЯЖЕНИЕ', 'СЕРВИС', 'МНН', 'ОК', 'ГОСТИНИЦА'
+    }
+    structural_keys.update(RESERVED_KEYS)
+    for key in RESERVED_KEYS:
+        structural_keys.add(key.upper())
+        structural_keys.add(key.lower())
+    
+    print(f"DEBUG [apply]: Найдено {len(structural_keys)} структурных ключей")
+    
+    # ============================================
+    # ЗАМЕНА ТЕКСТОВ (ПОСТРОЧНО - ТОЛЬКО ОДНОСТРОЧНЫЕ!)
+    # ============================================
+    replaced_count = 0
+    result_lines = []
+    
+    for line in content.split('\n'):
+        # Обрабатываем каждую строку отдельно
+        result_line = line
+        
+        # Находим все значения в кавычках на этой строке
+        matches = list(re.finditer(r'"([^"]*)"', line))
+        
+        # Обрабатываем в обратном порядке, чтобы не сбить индексы
+        for match in reversed(matches):
+            original_text = match.group(1)
+            text_stripped = original_text.strip()
+            
+            # 🔴 ПРОПУСКАЕМ ТОЛЬКО ЧИСТЫЕ СТРУКТУРНЫЕ ЭЛЕМЕНТЫ (не плейсхолдеры!)
+            text_without_placeholders = re.sub(r'\{[A-Z_]+\}', '', text_stripped)
+            if re.search(r'[\[\]]', text_without_placeholders):
+                continue
+            
+            # 🔴 КРИТИЧЕСКАЯ ПРОВЕРКА: Пропускаем структурные ключи!
+            if text_stripped in structural_keys:
+                continue
+            
+            # 🔴 Дополнительная проверка: одно слово в верхнем регистре
+            words = text_stripped.split()
+            if len(words) == 1:
+                word = words[0]
+                if word.isupper() and word.isalpha() and len(word) <= 15:
+                    continue
+            
+            # Пропускаем пустые
+            if not text_stripped:
+                continue
+            
+            # Ищем перевод
+            translated_text = None
+            
+            if original_text in translations:
+                translated_text = translations[original_text]
+            elif original_text.replace('%r%', '').replace('%R%', '').strip() in translations:
+                clean_text = original_text.replace('%r%', '').replace('%R%', '').strip()
+                translated_text = translations[clean_text]
+            
+            # Применяем перевод
+            if translated_text:
+                start_pos = match.start(1)
+                end_pos = match.end(1)
+                
+                result_line = result_line[:start_pos] + translated_text + result_line[end_pos:]
+                replaced_count += 1
+                print(f"DEBUG [apply]: ✅ Заменено: {original_text[:50]}... → {translated_text[:50]}...")
+        
+        result_lines.append(result_line)
+    
+    # Собираем результат
+    result = '\n'.join(result_lines)
+    
+    # Сохраняем результат
+    try:
+        os.makedirs(os.path.dirname(output_file), exist_ok=True) if os.path.dirname(output_file) else None
+        
+        with open(output_file, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(result)
+        
+        return True, replaced_count
+    except Exception as e:
+        print(f"❌ Ошибка записи файла {output_file}: {e}")
+        return False, 0
 
 def translate_with_placeholder_protection(text, api_key, translator="deepl", region="global", retry=3):
     """Переводит с защитой плейсхолдеров"""
@@ -484,7 +726,10 @@ def translate_with_microsoft(text, api_key, region='global', source_lang='en', t
     return None, "Не удалось перевести через Microsoft"
 
 def apply_translations_to_file(original_file, translations, output_file):
-    """Применяет переводы к файлу"""
+    """Применяет переводы к файлу (ВЕРСИЯ 3.3.5 - УЛУЧШЕННАЯ ЗАЩИТА)"""
+    import re
+    import os
+    
     try:
         with open(original_file, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -501,42 +746,107 @@ def apply_translations_to_file(original_file, translations, output_file):
         except:
             return False, 0
     
-    pattern = r'"([^"]*)"'
+    # ============================================
+    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ:
+    # Определяем структурные ключи ДО замены
+    # ============================================
+    structural_keys = set()
+    
+    # Находим все ключи перед двоеточием
+    for line in content.split('\n'):
+        line_stripped = line.strip()
+        
+        # УЛУЧШЕНИЕ: Игнорируем строки структуры вида "KEY: [" или "KEY: {"
+        if re.match(r'^[A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*\s*:\s*[\[{]?\s*$', line_stripped):
+            key_match = re.match(r'^([A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*)\s*:', line_stripped)
+            if key_match:
+                key = key_match.group(1)
+                structural_keys.add(key)
+                structural_keys.add(key.upper())
+                structural_keys.add(key.lower())
+        
+        # Также обычные ключи
+        match = re.match(r'^([A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*)\s*:', line_stripped)
+        if match:
+            key = match.group(1)
+            structural_keys.add(key)
+            structural_keys.add(key.upper())
+            structural_keys.add(key.lower())
+    
+    # Добавляем зарезервированные ключи
+    RESERVED_KEYS = {
+        'RATING', 'BAD', 'OK', 'GOOD', 'ATTRACTION', 'SERVICE', 'INN', 'HOTEL',
+        'WIKI', 'NAME', 'TEXT', 'CATEGORY', 'CATEGORIES',
+        'ПЛОХО', 'ХОРОШО', 'ПРИТЯЖЕНИЕ', 'СЕРВИС', 'МНН', 'ОК', 'ГОСТИНИЦА'
+    }
+    structural_keys.update(RESERVED_KEYS)
+    for key in RESERVED_KEYS:
+        structural_keys.add(key.upper())
+        structural_keys.add(key.lower())
+    
+    print(f"DEBUG [apply]: Найдено {len(structural_keys)} структурных ключей")
+    
+    # ============================================
+    # ЗАМЕНА ТЕКСТОВ (ПОСТРОЧНО - ТОЛЬКО ОДНОСТРОЧНЫЕ!)
+    # ============================================
     replaced_count = 0
-    result = content
+    result_lines = []
     
-    matches = list(re.finditer(pattern, content))
-    
-    for match in reversed(matches):
-        original_text = match.group(1)
+    for line in content.split('\n'):
+        # Обрабатываем каждую строку отдельно
+        result_line = line
         
-        if not original_text.strip():
-            continue
+        # Находим все значения в кавычках на этой строке
+        matches = list(re.finditer(r'"([^"]*)"', line))
         
-        translated_text = None
-        
-        if original_text in translations:
-            translated_text = translations[original_text]
-        elif original_text.replace('%r%', '').replace('%R%', '').strip() in translations:
-            clean_text = original_text.replace('%r%', '').replace('%R%', '').strip()
-            translated_text = translations[clean_text]
-        else:
-            english_part = extract_english_parts(original_text)
-            if english_part:
-                clean_english = english_part.replace('%r%', '').replace('%R%', '').strip()
-                
-                if clean_english in translations:
-                    translated_text = translations[clean_english]
-                elif english_part in translations:
-                    translated_text = translations[english_part]
-        
-        if translated_text:
-            start_pos = match.start(1)
-            end_pos = match.end(1)
+        # Обрабатываем в обратном порядке, чтобы не сбить индексы
+        for match in reversed(matches):
+            original_text = match.group(1)
+            text_stripped = original_text.strip()
             
-            result = result[:start_pos] + translated_text + result[end_pos:]
-            replaced_count += 1
+            # 🔴 ПРОПУСКАЕМ СТРУКТУРНЫЕ ЭЛЕМЕНТЫ
+            if re.search(r'[\[\]\{\}]', text_stripped):
+                continue
+            
+            # 🔴 КРИТИЧЕСКАЯ ПРОВЕРКА: Пропускаем структурные ключи!
+            if text_stripped in structural_keys:
+                continue
+            
+            # 🔴 Дополнительная проверка: одно слово в верхнем регистре
+            words = text_stripped.split()
+            if len(words) == 1:
+                word = words[0]
+                if word.isupper() and word.isalpha() and len(word) <= 15:
+                    continue
+            
+            # Пропускаем пустые
+            if not text_stripped:
+                continue
+            
+            # Ищем перевод
+            translated_text = None
+            
+            if original_text in translations:
+                translated_text = translations[original_text]
+            elif original_text.replace('%r%', '').replace('%R%', '').strip() in translations:
+                clean_text = original_text.replace('%r%', '').replace('%R%', '').strip()
+                translated_text = translations[clean_text]
+            
+            # Применяем перевод
+            if translated_text:
+                start_pos = match.start(1)
+                end_pos = match.end(1)
+                
+                result_line = result_line[:start_pos] + translated_text + result_line[end_pos:]
+                replaced_count += 1
+                print(f"DEBUG [apply]: ✅ Заменено: {original_text[:50]}... → {translated_text[:50]}...")
+        
+        result_lines.append(result_line)
     
+    # Собираем результат
+    result = '\n'.join(result_lines)
+    
+    # Сохраняем результат
     try:
         os.makedirs(os.path.dirname(output_file), exist_ok=True) if os.path.dirname(output_file) else None
         

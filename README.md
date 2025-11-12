@@ -4,6 +4,10 @@
 
 ##  Быстрый старт
 
+![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Version](https://img.shields.io/badge/version-3.3-orange.svg)
+
 ### 1. Установка зависимостей
 
 \\\ash
