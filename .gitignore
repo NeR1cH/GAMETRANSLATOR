@@ -1,27 +1,16 @@
-```gitignore
+```
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Backup files
-*.backup
-
-# Virtual environments
-.venv/
-venv/
-env/
-
-# Dependencies
-node_modules/
-
-# Logs and temporary files
+# Logs and temp files
 *.log
 *.tmp
 *.swp
 
-# Environment variables
+# Environment
 .env
 .env.local
 *.env.*
@@ -30,8 +19,13 @@ node_modules/
 .vscode/
 .idea/
 
+# Dependencies
+.venv/
+venv/
+node_modules/
+
 # Build artifacts
-build/
 dist/
+build/
 target/
 ```

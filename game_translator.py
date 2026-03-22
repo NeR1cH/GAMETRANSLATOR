@@ -28,6 +28,7 @@ import json
 from pathlib import Path
 import uuid
 import logging
+import asyncio
 
 # Настройка логгирования
 logging.basicConfig(
@@ -36,6 +37,31 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
+# Проверка и установка зависимостей для асинхронности
+try:
+    import aiohttp
+except ImportError:
+    logger.info("Установка aiohttp для асинхронных запросов...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "aiohttp", "--quiet"])
+        import aiohttp
+        logger.info("✅ aiohttp установлен!")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось установить aiohttp: {e}")
+        aiohttp = None
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    logger.info("Установка tqdm для прогресс-бара...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "tqdm", "--quiet"])
+        from tqdm import tqdm
+        logger.info("✅ tqdm установлен!")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось установить tqdm: {e}")
+        tqdm = None
 
 # Импортируем tkinter только если не в тестовом режиме
 tk = None
@@ -499,16 +525,22 @@ def save_translations_to_file(file_path, translations):
         logger.error(f"❌ Ошибка сохранения: {e}")
         return False
 
-def translate_texts_batch(texts, api_key, translator="deepl", source_lang='EN', target_lang='RU', region='global', retry=3):
-    """Пакетный перевод текстов (до 50 текстов за запрос)"""
+def translate_texts_batch(texts, api_key, translator="deepl", source_lang='EN', target_lang='RU', region='global', retry=3, use_async=True):
+    """Пакетный перевод текстов с прогресс-баром и асинхронной поддержкой"""
     if not texts:
         return []
     
     # DeepL поддерживает до 50 текстов в одном запросе
     batch_size = 50
     results = []
+    total_batches = (len(texts) + batch_size - 1) // batch_size
     
-    for i in range(0, len(texts), batch_size):
+    # Используем tqdm для прогресс-бара если доступен
+    batch_iterator = range(0, len(texts), batch_size)
+    if tqdm is not None and len(texts) > batch_size:
+        batch_iterator = tqdm.tqdm(batch_iterator, total=total_batches, desc="📦 Пакетный перевод", unit="пакет")
+    
+    for i in batch_iterator:
         batch = texts[i:i + batch_size]
         
         if translator == "deepl":
@@ -533,7 +565,8 @@ def translate_texts_batch(texts, api_key, translator="deepl", source_lang='EN', 
                     for text in batch:
                         result = translate_with_deepl(text, api_key, source_lang, target_lang, retry)
                         results.append(result[0] if isinstance(result, tuple) else result)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка пакетного перевода DeepL: {e}, используем индивидуальный перевод")
                 # Fallback to individual translation
                 for text in batch:
                     result = translate_with_deepl(text, api_key, source_lang, target_lang, retry)
@@ -560,13 +593,193 @@ def translate_texts_batch(texts, api_key, translator="deepl", source_lang='EN', 
                     for text in batch:
                         result = translate_with_microsoft(text, api_key, region, source_lang, target_lang, retry)
                         results.append(result[0] if isinstance(result, tuple) else result)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка пакетного перевода Microsoft: {e}, используем индивидуальный перевод")
                 # Fallback to individual translation
                 for text in batch:
                     result = translate_with_microsoft(text, api_key, region, source_lang, target_lang, retry)
                     results.append(result[0] if isinstance(result, tuple) else result)
     
     return results
+
+
+async def translate_texts_batch_async(texts, api_key, translator="deepl", source_lang='EN', target_lang='RU', region='global', retry=3):
+    """Асинхронный пакетный перевод текстов с прогресс-баром"""
+    if not texts:
+        return []
+    
+    if aiohttp is None:
+        logger.warning("⚠️ aiohttp не установлен, используем синхронный перевод")
+        return translate_texts_batch(texts, api_key, translator, source_lang, target_lang, region, retry)
+    
+    batch_size = 50
+    results = []
+    total_batches = (len(texts) + batch_size - 1) // batch_size
+    
+    async with aiohttp.ClientSession() as session:
+        # Создаем задачи для всех батчей
+        tasks = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            task = process_batch_async(session, batch, api_key, translator, source_lang, target_lang, region, retry)
+            tasks.append(task)
+        
+        # Выполняем все задачи с прогресс-баром
+        if tqdm is not None and len(tasks) > 1:
+            batch_results = []
+            for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="🚀 Асинхронный перевод", unit="пакет"):
+                result = await f
+                batch_results.append(result)
+            # Собираем результаты в правильном порядке
+            for batch_result in batch_results:
+                results.extend(batch_result)
+        else:
+            batch_results = await asyncio.gather(*tasks)
+            for batch_result in batch_results:
+                results.extend(batch_result)
+    
+    return results
+
+
+async def process_batch_async(session, batch, api_key, translator, source_lang, target_lang, region, retry):
+    """Обрабатывает один батч асинхронно"""
+    if translator == "deepl":
+        url = "https://api-free.deepl.com/v2/translate" if ':fx' in api_key else "https://api.deepl.com/v2/translate"
+        params = {
+            'auth_key': api_key,
+            'source_lang': source_lang,
+            'target_lang': target_lang
+        }
+        for text in batch:
+            params.setdefault('text', [])
+            params['text'].append(text)
+        
+        for attempt in range(retry):
+            try:
+                async with session.post(url, data=params, timeout=aiohttp.ClientTimeout(total=60)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return [t['text'] for t in data['translations']]
+                    else:
+                        break
+            except Exception:
+                if attempt == retry - 1:
+                    break
+                await asyncio.sleep(1)
+        
+        # Fallback to individual translation
+        results = []
+        for text in batch:
+            result = await translate_with_deepl_async(session, text, api_key, source_lang, target_lang, retry)
+            results.append(result[0] if isinstance(result, tuple) else result)
+        return results
+    
+    elif translator == "microsoft":
+        endpoint = "https://api.cognitive.microsofttranslator.com/translate"
+        params = {'api-version': '3.0', 'from': source_lang, 'to': target_lang}
+        headers = {
+            'Ocp-Apim-Subscription-Key': api_key,
+            'Ocp-Apim-Subscription-Region': region,
+            'Content-type': 'application/json',
+            'X-ClientTraceId': str(uuid.uuid4())
+        }
+        body = [{'text': text} for text in batch]
+        
+        for attempt in range(retry):
+            try:
+                async with session.post(endpoint, params=params, headers=headers, json=body, timeout=aiohttp.ClientTimeout(total=60)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return [t['text'] for t in data[0]['translations']]
+                    else:
+                        break
+            except Exception:
+                if attempt == retry - 1:
+                    break
+                await asyncio.sleep(1)
+        
+        # Fallback to individual translation
+        results = []
+        for text in batch:
+            result = await translate_with_microsoft_async(session, text, api_key, region, source_lang, target_lang, retry)
+            results.append(result[0] if isinstance(result, tuple) else result)
+        return results
+    
+    return []
+
+
+async def translate_with_deepl_async(session, text, api_key, source_lang='EN', target_lang='RU', retry=3):
+    """Асинхронный перевод через DeepL"""
+    url = "https://api-free.deepl.com/v2/translate" if ':fx' in api_key else "https://api.deepl.com/v2/translate"
+    params = {
+        'auth_key': api_key,
+        'text': text,
+        'source_lang': source_lang,
+        'target_lang': target_lang
+    }
+    
+    for attempt in range(retry):
+        try:
+            async with session.post(url, data=params, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['translations'][0]['text']
+                elif response.status == 403:
+                    return None, "Неверный API ключ"
+                elif response.status == 456:
+                    return None, "Превышен лимит"
+                elif response.status == 429:
+                    await asyncio.sleep(5)
+                elif response.status == 500:
+                    await asyncio.sleep(2)
+                else:
+                    await asyncio.sleep(1)
+        except asyncio.TimeoutError:
+            if attempt == retry - 1:
+                return None, "Таймаут"
+            await asyncio.sleep(1)
+        except Exception as e:
+            if attempt == retry - 1:
+                return None, str(e)
+            await asyncio.sleep(1)
+    
+    return None, "Все попытки исчерпаны"
+
+
+async def translate_with_microsoft_async(session, text, api_key, region, source_lang='EN', target_lang='RU', retry=3):
+    """Асинхронный перевод через Microsoft"""
+    endpoint = "https://api.cognitive.microsofttranslator.com/translate"
+    params = {'api-version': '3.0', 'from': source_lang, 'to': target_lang}
+    headers = {
+        'Ocp-Apim-Subscription-Key': api_key,
+        'Ocp-Apim-Subscription-Region': region,
+        'Content-type': 'application/json',
+        'X-ClientTraceId': str(uuid.uuid4())
+    }
+    body = [{'text': text}]
+    
+    for attempt in range(retry):
+        try:
+            async with session.post(endpoint, params=params, headers=headers, json=body, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data[0]['translations'][0]['text']
+                elif response.status == 403:
+                    return None, "Неверный API ключ"
+                elif response.status == 429:
+                    await asyncio.sleep(5)
+                else:
+                    await asyncio.sleep(1)
+        except asyncio.TimeoutError:
+            if attempt == retry - 1:
+                return None, "Таймаут"
+            await asyncio.sleep(1)
+        except Exception as e:
+            if attempt == retry - 1:
+                return None, str(e)
+            await asyncio.sleep(1)
+    
+    return None, "Все попытки исчерпаны"
 
 def translate_with_deepl(text, api_key, source_lang='EN', target_lang='RU', retry=3):
     """Переводит через DeepL"""
