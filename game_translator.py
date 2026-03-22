@@ -18,6 +18,7 @@ import sys
 import subprocess
 import os
 import re
+from functools import lru_cache
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext
 import time
@@ -135,11 +136,22 @@ def extract_archive(archive_path, extract_to):
         print(f"⚠️ Ошибка распаковки архива: {e}")
         return False
 
+def is_safe_path(base_path, user_path):
+    """Проверяет, что путь находится внутри базовой директории (защита от Path Traversal)"""
+    base = os.path.abspath(base_path)
+    target = os.path.abspath(user_path)
+    return target.startswith(base + os.sep) or target == base
+
 def search_folder(folder_path, extract_archives=False):
     """Ищет файлы и извлекает текст"""
     total_files = 0
     unique_texts = set()
     file_structure = {}
+    
+    # Проверка на Path Traversal
+    if not is_safe_path(os.getcwd(), folder_path):
+        print(f"❌ Ошибка: путь '{folder_path}' выходит за пределы рабочей директории")
+        return 0, set(), {}
     
     text_extensions = ('.txt', '.json', '.yml', '.yaml', '.xml')
     
@@ -283,9 +295,14 @@ def extract_english_text_from_file(file_path):
         print(f"ERROR: {e}")
         return []
 
+@lru_cache(maxsize=1024)
+def extract_placeholders(text):
+    """Кэшированное извлечение плейсхолдеров"""
+    return re.findall(r'\{[A-Z0-9_]+\}', text)
+
 def translate_with_placeholder_protection(text, api_key, translator="deepl", region="global", retry=3):
     """Переводит с защитой плейсхолдеров"""
-    placeholders = re.findall(r'\{[A-Z0-9_]+\}', text)
+    placeholders = extract_placeholders(text)
     
     if not placeholders:
         if translator == "deepl":
@@ -461,6 +478,75 @@ def save_translations_to_file(file_path, translations):
     except Exception as e:
         print(f"❌ Ошибка сохранения: {e}")
         return False
+
+def translate_texts_batch(texts, api_key, translator="deepl", source_lang='EN', target_lang='RU', region='global', retry=3):
+    """Пакетный перевод текстов (до 50 текстов за запрос)"""
+    if not texts:
+        return []
+    
+    # DeepL поддерживает до 50 текстов в одном запросе
+    batch_size = 50
+    results = []
+    
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        
+        if translator == "deepl":
+            url = "https://api-free.deepl.com/v2/translate" if ':fx' in api_key else "https://api.deepl.com/v2/translate"
+            params = {
+                'auth_key': api_key,
+                'source_lang': source_lang,
+                'target_lang': target_lang
+            }
+            # DeepL принимает multiple text parameters
+            for text in batch:
+                params.setdefault('text', [])
+                params['text'].append(text)
+            
+            try:
+                response = requests.post(url, data=params, timeout=60)
+                if response.status_code == 200:
+                    translations = [t['text'] for t in response.json()['translations']]
+                    results.extend(translations)
+                else:
+                    # Fallback to individual translation
+                    for text in batch:
+                        result = translate_with_deepl(text, api_key, source_lang, target_lang, retry)
+                        results.append(result[0] if isinstance(result, tuple) else result)
+            except Exception:
+                # Fallback to individual translation
+                for text in batch:
+                    result = translate_with_deepl(text, api_key, source_lang, target_lang, retry)
+                    results.append(result[0] if isinstance(result, tuple) else result)
+        
+        elif translator == "microsoft":
+            endpoint = "https://api.cognitive.microsofttranslator.com/translate"
+            params = {'api-version': '3.0', 'from': source_lang, 'to': target_lang}
+            headers = {
+                'Ocp-Apim-Subscription-Key': api_key,
+                'Ocp-Apim-Subscription-Region': region,
+                'Content-type': 'application/json',
+                'X-ClientTraceId': str(uuid.uuid4())
+            }
+            body = [{'text': text} for text in batch]
+            
+            try:
+                response = requests.post(endpoint, params=params, headers=headers, json=body, timeout=60)
+                if response.status_code == 200:
+                    translations = [t['text'] for t in response.json()[0]['translations']]
+                    results.extend(translations)
+                else:
+                    # Fallback to individual translation
+                    for text in batch:
+                        result = translate_with_microsoft(text, api_key, region, source_lang, target_lang, retry)
+                        results.append(result[0] if isinstance(result, tuple) else result)
+            except Exception:
+                # Fallback to individual translation
+                for text in batch:
+                    result = translate_with_microsoft(text, api_key, region, source_lang, target_lang, retry)
+                    results.append(result[0] if isinstance(result, tuple) else result)
+    
+    return results
 
 def translate_with_deepl(text, api_key, source_lang='EN', target_lang='RU', retry=3):
     """Переводит через DeepL"""
