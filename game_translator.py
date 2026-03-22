@@ -28,6 +28,26 @@ import shutil
 import json
 from pathlib import Path
 import uuid
+from functools import lru_cache
+
+# ===================================================================
+# КОМПИЛИРОВАННЫЕ REGEX (ОПТИМИЗАЦИЯ ПРОИЗВОДИТЕЛЬНОСТИ)
+# ===================================================================
+
+# Паттерны для извлечения английского текста
+RE_PERCENT_PLACEHOLDER = re.compile(r'%\w+%')
+RE_ENGLISH_WORDS = re.compile(r'\b[A-Za-z]{2,}\b')
+RE_STRUCTURAL_KEY = re.compile(r'^([A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*)\s*:')
+RE_DOUBLE_QUOTES = re.compile(r'"([^"]+)"')
+RE_SINGLE_QUOTES_COMPLEX = re.compile(r"'([^']+(?:'[^']+)*)'")
+RE_SINGLE_QUOTES_SIMPLE = re.compile(r"'([^']+)'")
+RE_PLACEHOLDER_BRACES = re.compile(r'\{[A-Z_]+\}')
+RE_BRACKETS_BRACES = re.compile(r'[\[\]\{\}]')
+RE_CYRILLIC = re.compile(r'[А-Яа-яЁё]')
+RE_LATIN = re.compile(r'[A-Za-z]')
+RE_PLACEHOLDER_ALL = re.compile(r'\{[^}]*\}')
+RE_CURLY_PLACEHOLDERS = re.compile(r'\{[A-Z0-9_]+\}')
+RE_SLAVIC_CHARS = re.compile(r'[А-Яа-яЁёЇїІіЄєЎў]')
 
 # ===================================================================
 # ПРОВЕРКА И УСТАНОВКА ЗАВИСИМОСТЕЙ
@@ -48,8 +68,8 @@ if not check_dependencies():
         print("✅ Зависимости установлены! Перезапусти программу.")
         input("Нажми Enter для выхода...")
         sys.exit(0)
-    except:
-        print("❌ Не удалось установить requests")
+    except Exception as e:
+        print(f"❌ Не удалось установить requests: {e}")
         print("Выполни вручную: pip install requests")
         input("Нажми Enter для выхода...")
         sys.exit(1)
@@ -68,7 +88,8 @@ def load_config():
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except:
+        except Exception as e:
+            print(f"⚠️ Ошибка загрузки конфига: {e}")
             pass
     return {
         "deepl_api_key": "",
@@ -83,7 +104,8 @@ def save_config(config):
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2)
         return True
-    except:
+    except Exception as e:
+        print(f"⚠️ Ошибка сохранения конфига: {e}")
         return False
 
 # ===================================================================
@@ -109,7 +131,8 @@ def extract_archive(archive_path, extract_to):
             return True
         
         return False
-    except:
+    except Exception as e:
+        print(f"⚠️ Ошибка распаковки архива: {e}")
         return False
 
 def search_folder(folder_path, extract_archives=False):
@@ -119,10 +142,6 @@ def search_folder(folder_path, extract_archives=False):
     file_structure = {}
     
     text_extensions = ('.txt', '.json', '.yml', '.yaml', '.xml')
-    
-    print(f"\n{'='*60}")
-    print(f"DEBUG [ПОИСК]: Сканирование папки: {folder_path}")
-    print(f"{'='*60}\n")
     
     try:
         all_files_found = []
@@ -135,8 +154,6 @@ def search_folder(folder_path, extract_archives=False):
                 if file.endswith(text_extensions):
                     all_files_found.append((file_path, rel_path))
         
-        print(f"DEBUG [ПОИСК]: ВСЕГО ФАЙЛОВ: {len(all_files_found)}\n")
-        
         for file_path, rel_path in all_files_found:
             try:
                 texts = extract_english_text_from_file(file_path)
@@ -146,31 +163,48 @@ def search_folder(folder_path, extract_archives=False):
                     unique_texts.update(texts)
                     file_structure[rel_path] = texts
             except Exception as e:
-                print(f"DEBUG [ПОИСК]: ❌ Ошибка {rel_path}: {e}")
-        
-        print(f"\nDEBUG [ПОИСК]: ИТОГО:")
-        print(f"  Обработано файлов: {total_files}")
-        print(f"  Уникальных текстов: {len(unique_texts)}\n")
+                print(f"⚠️ Ошибка обработки {rel_path}: {e}")
         
         return total_files, unique_texts, file_structure
     
     except Exception as e:
-        print(f"DEBUG [ПОИСК]: ❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        print(f"❌ Критическая ошибка поиска: {e}")
         return 0, set(), {}
 
 # ===================================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ===================================================================
 
+@lru_cache(maxsize=1000)
 def extract_english_parts(text):
-    """Извлекает английский текст"""
-    temp_text = re.sub(r'%\w+%', '', text)
-    english_words = re.findall(r'\b[A-Za-z]{2,}\b', temp_text)
+    """Извлекает английский текст (с кэшированием)"""
+    temp_text = RE_PERCENT_PLACEHOLDER.sub('', text)
+    english_words = RE_ENGLISH_WORDS.findall(temp_text)
     
     if english_words:
         return text.strip()
     
     return None
+
+@lru_cache(maxsize=100)
+def _get_structural_keys(content_hash, content_sample):
+    """Кэширует определение структурных ключей"""
+    structural_keys = set()
+    for line in content_sample.split('\n'):
+        line_stripped = line.strip()
+        match = RE_STRUCTURAL_KEY.match(line_stripped)
+        if match:
+            key = match.group(1)
+            structural_keys.add(key)
+            structural_keys.add(key.upper())
+            structural_keys.add(key.lower())
+    
+    RESERVED_KEYS = {
+        'RATING', 'BAD', 'OK', 'GOOD', 'ATTRACTION', 'SERVICE', 'INN', 'HOTEL',
+        'WIKI', 'NAME', 'TEXT', 'CATEGORY', 'CATEGORIES', 'ATTRACTIONS'
+    }
+    structural_keys.update(RESERVED_KEYS)
+    return structural_keys
 
 def extract_english_text_from_file(file_path):
     """Извлекает английский текст из файла (v3.3.9 - ИСПРАВЛЕНА ПРОБЛЕМА С АПОСТРОФАМИ)"""
@@ -181,45 +215,24 @@ def extract_english_text_from_file(file_path):
             content = f.read()
         
         # Определяем структурные ключи
-        structural_keys = set()
-        for line in content.split('\n'):
-            line_stripped = line.strip()
-            match = re.match(r'^([A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*)\s*:', line_stripped)
-            if match:
-                key = match.group(1)
-                structural_keys.add(key)
-                structural_keys.add(key.upper())
-                structural_keys.add(key.lower())
-        
-        RESERVED_KEYS = {
-            'RATING', 'BAD', 'OK', 'GOOD', 'ATTRACTION', 'SERVICE', 'INN', 'HOTEL',
-            'WIKI', 'NAME', 'TEXT', 'CATEGORY', 'CATEGORIES', 'ATTRACTIONS'
-        }
-        structural_keys.update(RESERVED_KEYS)
+        structural_keys = _get_structural_keys(hash(content), content[:5000])
         
         # ===== ИСПРАВЛЕННОЕ ИЗВЛЕЧЕНИЕ =====
-        # Сначала обрабатываем ДВОЙНЫЕ кавычки (они приоритетнее)
-        # Затем одинарные, но только если они НЕ внутри двойных
-        
+        # Используем компилированные regex для производительности
         matches = []
         
         # Обработка по строкам
         for line in content.split('\n'):
             # 1. ДВОЙНЫЕ кавычки "..."
-            double_quotes = re.findall(r'"([^"]+)"', line)
+            double_quotes = RE_DOUBLE_QUOTES.findall(line)
             matches.extend(double_quotes)
             
             # 2. ОДИНАРНЫЕ кавычки '...', но только если нет двойных кавычек
             if '"' not in line:
-                # Ищем одинарные кавычки, НО игнорируем апострофы внутри слов
-                # Паттерн: ' в начале, затем текст (может содержать апострофы), затем ' в конце
-                single_quotes = re.findall(r"'([^']+(?:'[^']+)*)'", line)
+                single_quotes = RE_SINGLE_QUOTES_COMPLEX.findall(line)
                 
-                # Альтернативный надёжный способ для одинарных кавычек
-                # Ищем последовательность: ' + текст + ' (где текст не содержит ' в начале/конце)
                 if not single_quotes:
-                    # Простой паттерн для одинарных кавычек без вложенных
-                    simple_single = re.findall(r"'([^']+)'", line)
+                    simple_single = RE_SINGLE_QUOTES_SIMPLE.findall(line)
                     matches.extend(simple_single)
                 else:
                     matches.extend(single_quotes)
@@ -232,8 +245,8 @@ def extract_english_text_from_file(file_path):
                 continue
             
             # Пропускаем структурные элементы
-            text_without_placeholders = re.sub(r'\{[A-Z_]+\}', '', text_stripped)
-            if re.search(r'[\[\]\{\}]', text_without_placeholders):
+            text_without_placeholders = RE_PLACEHOLDER_BRACES.sub('', text_stripped)
+            if RE_BRACKETS_BRACES.search(text_without_placeholders):
                 continue
             
             # Пропускаем структурные ключи
@@ -248,16 +261,16 @@ def extract_english_text_from_file(file_path):
                     continue
             
             # Пропускаем строки с преобладанием русского
-            cyrillic_count = len(re.findall(r'[А-Яа-яЁё]', text_stripped))
-            latin_count = len(re.findall(r'[A-Za-z]', text_stripped))
+            cyrillic_count = len(RE_CYRILLIC.findall(text_stripped))
+            latin_count = len(RE_LATIN.findall(text_stripped))
             
             if cyrillic_count > latin_count and cyrillic_count > 10:
                 continue
             
             # Проверяем наличие английских слов
-            text_no_placeholders = re.sub(r'\{[^}]*\}', '', text_stripped)
-            text_no_placeholders = re.sub(r'%\w+%', '', text_no_placeholders)
-            english_words = re.findall(r'\b[A-Za-z]{2,}\b', text_no_placeholders)
+            text_no_placeholders = RE_PLACEHOLDER_ALL.sub('', text_stripped)
+            text_no_placeholders = RE_PERCENT_PLACEHOLDER.sub('', text_no_placeholders)
+            english_words = RE_ENGLISH_WORDS.findall(text_no_placeholders)
             
             if len(english_words) == 0:
                 continue
@@ -479,10 +492,11 @@ def translate_with_deepl(text, api_key, source_lang='EN', target_lang='RU', retr
                     return None, "Ошибка сервера DeepL"
             else:
                 return None, f"Ошибка API: {response.status_code}"
-        except:
+        except Exception as e:
             if attempt < retry - 1:
                 time.sleep(2)
             else:
+                print(f"⚠️ Ошибка DeepL API: {e}")
                 return None, "Ошибка подключения"
     
     return None, "Не удалось перевести"
@@ -517,10 +531,11 @@ def translate_with_microsoft(text, api_key, region='global', source_lang='en', t
                     return None, "Ошибка сервера Microsoft"
             else:
                 return None, f"Ошибка API: {response.status_code}"
-        except:
+        except Exception as e:
             if attempt < retry - 1:
                 time.sleep(2)
             else:
+                print(f"⚠️ Ошибка Microsoft API: {e}")
                 return None, "Ошибка подключения"
     
     return None, "Не удалось перевести"
@@ -1417,8 +1432,8 @@ class TranslatorApp:
                             # Удаляем временный файл
                             try:
                                 os.remove(temp_trans_file)
-                            except:
-                                pass
+                            except Exception as e:
+                                print(f"⚠️ Не удалось удалить временный файл: {e}")
                             
                             self.show_info("Успех!", 
                                         f"✅ Переводы сконвертированы и сохранены!\n\n"
@@ -1428,8 +1443,8 @@ class TranslatorApp:
                             # Если конвертация не удалась, сохраняем обычным способом
                             try:
                                 os.remove(temp_trans_file)
-                            except:
-                                pass
+                            except Exception as e:
+                                print(f"⚠️ Не удалось удалить временный файл: {e}")
                     return
                 
                 # Обычное сохранение (без автоконвертации)
@@ -1513,8 +1528,8 @@ class TranslatorApp:
                         if self.translate_source_type == "archive":
                             try:
                                 shutil.rmtree(temp_dir)
-                            except:
-                                pass
+                            except Exception as e:
+                                print(f"⚠️ Ошибка очистки временной папки: {e}")
                         
                         self.log_message("translate", f"\n📊 Итого:")
                         self.log_message("translate", f"   Обработано файлов: {processed_files}")
@@ -1687,7 +1702,7 @@ class TranslatorApp:
             if temp_dir:
                 try:
                     shutil.rmtree(temp_dir)
-                except:
+                except Exception as e:
                     pass
             
             self.log_message("convert", f"\n📊 ИТОГОВАЯ СТАТИСТИКА:")
@@ -2207,7 +2222,7 @@ class ArchiveBrowserDialog:
                         try:
                             size = os.path.getsize(full_path)
                             size_str = self.format_size(size)
-                        except:
+                        except Exception as e:
                             size_str = "?"
                         
                         items.append({
@@ -2305,7 +2320,7 @@ class ArchiveBrowserDialog:
         if self.temp_dir and os.path.exists(self.temp_dir):
             try:
                 shutil.rmtree(self.temp_dir)
-            except:
+            except Exception as e:
                 pass
 
 
@@ -2559,7 +2574,7 @@ class SettingsDialog:
             if entry.selection_present():
                 entry.delete(tk.SEL_FIRST, tk.SEL_LAST)
             entry.insert(tk.INSERT, text)
-        except:
+        except Exception as e:
             pass
         return "break"
 
@@ -2570,7 +2585,7 @@ class SettingsDialog:
                 text = entry.selection_get()
                 self.dialog.clipboard_clear()
                 self.dialog.clipboard_append(text)
-        except:
+        except Exception as e:
             pass
         return "break"
 
@@ -2582,7 +2597,7 @@ class SettingsDialog:
                 self.dialog.clipboard_clear()
                 self.dialog.clipboard_append(text)
                 entry.delete(tk.SEL_FIRST, tk.SEL_LAST)
-        except:
+        except Exception as e:
             pass
         return "break"
 
