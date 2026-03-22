@@ -29,7 +29,15 @@ import shutil
 import json
 from pathlib import Path
 import uuid
-from functools import lru_cache
+import logging
+
+# Настройка логгирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # ===================================================================
 # КОМПИЛИРОВАННЫЕ REGEX (ОПТИМИЗАЦИЯ ПРОИЗВОДИТЕЛЬНОСТИ)
@@ -63,15 +71,15 @@ def check_dependencies():
         return False
 
 if not check_dependencies():
-    print("Установка зависимостей...")
+    logger.info("Установка зависимостей...")
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "requests", "--quiet"])
-        print("✅ Зависимости установлены! Перезапусти программу.")
+        logger.info("✅ Зависимости установлены! Перезапусти программу.")
         input("Нажми Enter для выхода...")
         sys.exit(0)
     except Exception as e:
-        print(f"❌ Не удалось установить requests: {e}")
-        print("Выполни вручную: pip install requests")
+        logger.error(f"❌ Не удалось установить requests: {e}")
+        logger.error("Выполни вручную: pip install requests")
         input("Нажми Enter для выхода...")
         sys.exit(1)
 
@@ -90,7 +98,7 @@ def load_config():
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            print(f"⚠️ Ошибка загрузки конфига: {e}")
+            logger.warning(f"⚠️ Ошибка загрузки конфига: {e}")
             pass
     return {
         "deepl_api_key": "",
@@ -106,7 +114,7 @@ def save_config(config):
             json.dump(config, f, indent=2)
         return True
     except Exception as e:
-        print(f"⚠️ Ошибка сохранения конфига: {e}")
+        logger.warning(f"⚠️ Ошибка сохранения конфига: {e}")
         return False
 
 # ===================================================================
@@ -133,7 +141,7 @@ def extract_archive(archive_path, extract_to):
         
         return False
     except Exception as e:
-        print(f"⚠️ Ошибка распаковки архива: {e}")
+        logger.warning(f"⚠️ Ошибка распаковки архива: {e}")
         return False
 
 def is_safe_path(base_path, user_path):
@@ -150,7 +158,7 @@ def search_folder(folder_path, extract_archives=False):
     
     # Проверка на Path Traversal
     if not is_safe_path(os.getcwd(), folder_path):
-        print(f"❌ Ошибка: путь '{folder_path}' выходит за пределы рабочей директории")
+        logger.error(f"❌ Ошибка: путь '{folder_path}' выходит за пределы рабочей директории")
         return 0, set(), {}
     
     text_extensions = ('.txt', '.json', '.yml', '.yaml', '.xml')
@@ -175,12 +183,12 @@ def search_folder(folder_path, extract_archives=False):
                     unique_texts.update(texts)
                     file_structure[rel_path] = texts
             except Exception as e:
-                print(f"⚠️ Ошибка обработки {rel_path}: {e}")
+                logger.warning(f"⚠️ Ошибка обработки {rel_path}: {e}")
         
         return total_files, unique_texts, file_structure
     
     except Exception as e:
-        print(f"❌ Критическая ошибка поиска: {e}")
+        logger.error(f"❌ Критическая ошибка поиска: {e}")
         return 0, set(), {}
 
 # ===================================================================
@@ -292,7 +300,7 @@ def extract_english_text_from_file(file_path):
         return results
     
     except Exception as e:
-        print(f"ERROR: {e}")
+        logger.error(f"ERROR: {e}")
         return []
 
 @lru_cache(maxsize=1024)
@@ -341,7 +349,7 @@ def apply_translations_to_file(original_file, translations, output_file):
         with open(original_file, 'r', encoding='utf-8') as f:
             content = f.read()
     except Exception as e:
-        print(f"❌ Ошибка чтения {original_file}: {e}")
+        logger.error(f"❌ Ошибка чтения {original_file}: {e}")
         return False, 0
     
     if not content.strip():
@@ -411,7 +419,7 @@ def apply_translations_to_file(original_file, translations, output_file):
                 end_pos = match.end(1)
                 result_line = result_line[:start_pos] + translated_text + result_line[end_pos:]
                 replaced_count += 1
-                print(f"✅ [{quote_type}] Заменено: {original_text[:40]}... → {translated_text[:40]}...")
+                logger.info(f"✅ [{quote_type}] Заменено: {original_text[:40]}... → {translated_text[:40]}...")
         
         result_lines.append(result_line)
     
@@ -445,7 +453,7 @@ def load_translations_from_file(file_path):
                     if original and translated:
                         translations[original] = translated
     except Exception as e:
-        print(f"⚠️ Ошибка загрузки {file_path}: {e}")
+        logger.warning(f"⚠️ Ошибка загрузки {file_path}: {e}")
     
     return translations
 
@@ -476,7 +484,7 @@ def save_translations_to_file(file_path, translations):
         
         return True
     except Exception as e:
-        print(f"❌ Ошибка сохранения: {e}")
+        logger.error(f"❌ Ошибка сохранения: {e}")
         return False
 
 def translate_texts_batch(texts, api_key, translator="deepl", source_lang='EN', target_lang='RU', region='global', retry=3):
@@ -582,7 +590,7 @@ def translate_with_deepl(text, api_key, source_lang='EN', target_lang='RU', retr
             if attempt < retry - 1:
                 time.sleep(2)
             else:
-                print(f"⚠️ Ошибка DeepL API: {e}")
+                logger.warning(f"⚠️ Ошибка DeepL API: {e}")
                 return None, "Ошибка подключения"
     
     return None, "Не удалось перевести"
@@ -621,7 +629,7 @@ def translate_with_microsoft(text, api_key, region='global', source_lang='en', t
             if attempt < retry - 1:
                 time.sleep(2)
             else:
-                print(f"⚠️ Ошибка Microsoft API: {e}")
+                logger.warning(f"⚠️ Ошибка Microsoft API: {e}")
                 return None, "Ошибка подключения"
     
     return None, "Не удалось перевести"
@@ -1519,7 +1527,7 @@ class TranslatorApp:
                             try:
                                 os.remove(temp_trans_file)
                             except Exception as e:
-                                print(f"⚠️ Не удалось удалить временный файл: {e}")
+                                logger.warning(f"⚠️ Не удалось удалить временный файл: {e}")
                             
                             self.show_info("Успех!", 
                                         f"✅ Переводы сконвертированы и сохранены!\n\n"
@@ -1530,7 +1538,7 @@ class TranslatorApp:
                             try:
                                 os.remove(temp_trans_file)
                             except Exception as e:
-                                print(f"⚠️ Не удалось удалить временный файл: {e}")
+                                logger.warning(f"⚠️ Не удалось удалить временный файл: {e}")
                     return
                 
                 # Обычное сохранение (без автоконвертации)
@@ -1615,7 +1623,7 @@ class TranslatorApp:
                             try:
                                 shutil.rmtree(temp_dir)
                             except Exception as e:
-                                print(f"⚠️ Ошибка очистки временной папки: {e}")
+                                logger.warning(f"⚠️ Ошибка очистки временной папки: {e}")
                         
                         self.log_message("translate", f"\n📊 Итого:")
                         self.log_message("translate", f"   Обработано файлов: {processed_files}")
