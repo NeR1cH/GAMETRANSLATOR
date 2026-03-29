@@ -801,26 +801,45 @@ async def translate_with_microsoft_async(session, text, api_key, region, source_
     return None, "Все попытки исчерпаны"
 
 def translate_with_deepl(text, api_key, source_lang='EN', target_lang='RU', retry=3):
-    """Переводит через DeepL"""
-    url = "https://api-free.deepl.com/v2/translate" if ':fx' in api_key else "https://api.deepl.com/v2/translate"
+    """Переводит через DeepL с автоопределением Free/Pro"""
     
-    params = {
-        'auth_key': api_key,
-        'text': text,
+    if not api_key or not api_key.strip():
+        return None, "API ключ не указан"
+    
+    api_key = api_key.strip()
+    
+    # Автоматически выбираем endpoint
+    if ':fx' in api_key:
+        url = "https://api-free.deepl.com/v2/translate"
+    else:
+        url = "https://api.deepl.com/v2/translate"
+    
+    headers = {
+        'Authorization': f'DeepL-Auth-Key {api_key}',
+        'Content-Type': 'application/json'
+    }
+    
+    payload = {
+        'text': [text],
         'source_lang': source_lang,
         'target_lang': target_lang
     }
     
     for attempt in range(retry):
         try:
-            response = requests.post(url, data=params, timeout=30)
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
             
             if response.status_code == 200:
                 return response.json()['translations'][0]['text']
             elif response.status_code == 403:
                 return None, "Неверный API ключ"
             elif response.status_code == 456:
-                return None, "Превышен лимит"
+                return None, "Превышен лимит символов"
             elif response.status_code == 429:
                 time.sleep(5)
             elif response.status_code == 500:
@@ -830,14 +849,21 @@ def translate_with_deepl(text, api_key, source_lang='EN', target_lang='RU', retr
                     return None, "Ошибка сервера DeepL"
             else:
                 return None, f"Ошибка API: {response.status_code}"
+        
+        except requests.exceptions.ConnectionError:
+            return None, "Нет подключения к интернету"
+        except requests.exceptions.Timeout:
+            if attempt < retry - 1:
+                time.sleep(2)
+            else:
+                return None, "Таймаут подключения"
         except Exception as e:
             if attempt < retry - 1:
                 time.sleep(2)
             else:
-                logger.warning(f"⚠️ Ошибка DeepL API: {e}")
-                return None, "Ошибка подключения"
+                return None, f"Ошибка: {str(e)}"
     
-    return None, "Не удалось перевести"
+    return None, "Все попытки исчерпаны"
 
 def translate_with_microsoft(text, api_key, region='global', source_lang='en', target_lang='ru', retry=3):
     """Переводит через Microsoft"""
