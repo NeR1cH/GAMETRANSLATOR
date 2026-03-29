@@ -30,6 +30,25 @@ import uuid
 import logging
 import asyncio
 
+# --- НАЧАЛО ВСТАВКИ: Исправление загрузки .env ---
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Получаем абсолютный путь к директории со скриптом
+BASE_DIR = Path(__file__).resolve().parent
+ENV_PATH = BASE_DIR / '.env'
+
+# Явно загружаем .env из той же папки, где лежит скрипт
+if ENV_PATH.exists():
+    load_dotenv(dotenv_path=ENV_PATH)
+    # print(f"DEBUG: .env успешно загружен из {ENV_PATH}") # Можно раскомментировать для отладки
+else:
+    print(f"WARNING: Файл .env не найден по пути: {ENV_PATH}")
+    print(f"Текущая рабочая директория: {Path.cwd()}")
+# --- КОНЕЦ ВСТАВКИ ---
+
+
+
 # Настройка логгирования
 logging.basicConfig(
     level=logging.INFO,
@@ -3177,6 +3196,7 @@ def main():
     root = tk.Tk()
     app = TranslatorApp(root)
     root.mainloop()
+    
 
 if __name__ == "__main__":
     main()
